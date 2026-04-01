@@ -3,6 +3,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable, Optional
 
 
 class TrajectoryLogger:
@@ -11,8 +12,18 @@ class TrajectoryLogger:
     def __init__(self, export_path: Path) -> None:
         self._path = export_path
 
-    def append(self, task_id: str, prompt_text: str, git_diff: str) -> None:
-        """Append a trajectory record to the JSONL export file."""
+    def append(
+        self,
+        task_id: str,
+        prompt_text: str,
+        git_diff: str,
+        *,
+        on_record: Optional[Callable[[dict[str, Any]], None]] = None,
+    ) -> None:
+        """Append a trajectory record to the JSONL export file.
+
+        If ``on_record`` is set, it is called with the same dict written to disk (e.g. Wisdom RAG indexing).
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "task_id": task_id,
@@ -22,3 +33,5 @@ class TrajectoryLogger:
         }
         with open(self._path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        if on_record is not None:
+            on_record(record)

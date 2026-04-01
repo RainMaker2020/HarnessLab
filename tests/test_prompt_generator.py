@@ -108,6 +108,31 @@ def test_generate_no_retry_section_on_first_attempt(tmp_harness):
     assert "PREVIOUS FAILURE" not in content
 
 
+def test_generate_includes_wisdom_lessons(tmp_harness):
+    _, config = tmp_harness
+    gen = PromptGenerator(config)
+    lessons = [
+        {
+            "task_id": "TASK_99",
+            "task_description": "Similar work",
+            "error": "ImportError: missing module",
+            "fix": "Added dependency to package.json",
+        }
+    ]
+    gen.generate(
+        "TASK_01",
+        "Create hello_world.py",
+        attempt=1,
+        last_failure=None,
+        wisdom_lessons=lessons,
+    )
+    content = (config.workspace_dir / ".harness_prompt.md").read_text()
+    assert "Lessons from Experience (Level 5)" in content
+    assert "ImportError: missing module" in content
+    assert "Added dependency" in content
+    assert "Do not repeat the mistake" in content
+
+
 def test_write_changelog_creates_file(tmp_harness):
     _, config = tmp_harness
     gen = PromptGenerator(config)

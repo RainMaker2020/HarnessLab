@@ -14,6 +14,8 @@ from project_mapper import (
 if TYPE_CHECKING:
     from project_mapper import SituationalContext
 
+from wisdom_rag import format_wisdom_block
+
 
 def _dependency_graph_markdown(
     task_id: str,
@@ -84,6 +86,7 @@ class PromptGenerator:
         last_failure: Optional[dict],
         contract_path: Optional[Path] = None,
         situational_context: Optional["SituationalContext"] = None,
+        wisdom_lessons: Optional[list[dict[str, str]]] = None,
     ) -> Path:
         """Write workspace/.harness_prompt.md. Returns the path to the file."""
         architecture = self.config.architecture_doc.read_text()
@@ -147,6 +150,8 @@ class PromptGenerator:
                 "",
             ]
 
+        wisdom_block: list[str] = format_wisdom_block(wisdom_lessons or [])
+
         sections = [
             "# HarnessingLab v1.5 — Autonomous Task Prompt",
             f"**Generated:** {datetime.now(timezone.utc).isoformat()}",
@@ -166,6 +171,7 @@ class PromptGenerator:
             "",
             *situational_block,
             *global_interface_block,
+            *wisdom_block,
             "",
             "---",
             "",

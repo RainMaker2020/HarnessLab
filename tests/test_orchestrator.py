@@ -83,6 +83,7 @@ def config(harness_root):
         project = SimpleNamespace(name="test-harness")
         test_first = False
         contract_negotiation_max_retries = 3
+        wisdom_rag_enabled = False
 
     return Cfg()
 

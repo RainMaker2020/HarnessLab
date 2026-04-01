@@ -36,6 +36,7 @@ from prompt_generator import PromptGenerator
 from sandbox import DockerManager
 from trajectory_logger import TrajectoryLogger
 from ui import ObservationDeck
+from wisdom_rag import WisdomRAG, maybe_wisdom_rag
 
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
@@ -258,6 +259,19 @@ class SubOrchestrator:
         self.trajectory_logger: Optional[TrajectoryLogger] = (
             TrajectoryLogger(config.distillation_export) if config.distillation_mode else None
         )
+        self._wisdom: Optional[WisdomRAG] = None
+        if config.wisdom_rag_enabled:
+            try:
+                self._wisdom = maybe_wisdom_rag(True, config.resolved_wisdom_store)
+                if self._wisdom is not None:
+                    self._wisdom.index_from_files(
+                        config.history_file,
+                        config.distillation_export,
+                        config.plan_file,
+                    )
+            except (OSError, RuntimeError, ValueError) as exc:
+                self.ui.info(f"Wisdom RAG unavailable — continuing without experience recall: {exc}")
+                self._wisdom = None
         self.git = GitManager(config.workspace_dir, ui)
         self.history = HistoryManager(config.history_file)
         self.prompt_gen = PromptGenerator(config)
@@ -326,6 +340,14 @@ class SubOrchestrator:
 
     def _run_task(self, task: Task) -> None:
         """Attempt a task up to max_retries times with rollback on failure."""
+        wisdom_lessons: list[dict[str, str]] = []
+        if self._wisdom is not None:
+            try:
+                wisdom_lessons = self._wisdom.retrieve_lessons(task.description, top_k=3)
+            except (OSError, RuntimeError, ValueError) as exc:
+                self.ui.info(f"Wisdom retrieval skipped: {exc}")
+                wisdom_lessons = []
+
         contract_path: Optional[Path] = None
         if self.config.test_first:
             contract_path = self._negotiate_contract(task)
@@ -350,6 +372,7 @@ class SubOrchestrator:
                 last_failure=last_failure,
                 contract_path=contract_path,
                 situational_context=situational,
+                wisdom_lessons=wisdom_lessons,
             )
             self.ui.prompt_written(prompt_file.name)
 
@@ -404,9 +427,39 @@ class SubOrchestrator:
         commit_msg = f"feat: {task.task_id} completed{f' {tag}' if tag else ''}"
         self.prompt_gen.write_changelog(task.task_id, task.description)
         self.git.commit(commit_msg)
+        prompt_text = prompt_file.read_text(encoding="utf-8") if prompt_file and prompt_file.exists() else ""
+        git_diff = self.git.diff_last_commit()
+
+        def _wisdom_from_record(record: dict) -> None:
+            if self._wisdom is None:
+                return
+            try:
+                self._wisdom.ingest_success_trajectory(
+                    task.task_id,
+                    task.description,
+                    str(record.get("input") or ""),
+                    str(record.get("output_git_diff") or ""),
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                self.ui.info(f"Wisdom ingest skipped: {exc}")
+
         if self.trajectory_logger is not None and prompt_file is not None:
-            prompt_text = prompt_file.read_text() if prompt_file.exists() else ""
-            self.trajectory_logger.append(task.task_id, prompt_text, self.git.diff_last_commit())
+            self.trajectory_logger.append(
+                task.task_id,
+                prompt_text,
+                git_diff,
+                on_record=_wisdom_from_record if self._wisdom else None,
+            )
+        elif self._wisdom is not None and prompt_file is not None:
+            try:
+                self._wisdom.ingest_success_trajectory(
+                    task.task_id,
+                    task.description,
+                    prompt_text,
+                    git_diff,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                self.ui.info(f"Wisdom ingest skipped: {exc}")
         self.parser.mark_done(task)
         self.ui.success(task.task_id)
 

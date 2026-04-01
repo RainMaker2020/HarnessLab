@@ -38,6 +38,7 @@ class PathsConfig:
     screenshot_target: Optional[Path]
     global_interface_doc: Optional[Path]
     interfaces_file: Optional[Path]
+    wisdom_store: Optional[Path]
 
 
 @dataclass
@@ -68,6 +69,7 @@ class OrchestrationConfig:
     epic_file: Optional[Path]
     sub_workspace_isolation: str
     worktrees_root: Optional[Path]
+    wisdom_rag: bool
 
 
 @dataclass
@@ -199,6 +201,17 @@ class HarnessConfig:
     def worktrees_root_path(self) -> Optional[Path]:
         return self.orchestration.worktrees_root
 
+    @property
+    def wisdom_rag_enabled(self) -> bool:
+        return self.orchestration.wisdom_rag
+
+    @property
+    def resolved_wisdom_store(self) -> Path:
+        """Directory for ChromaDB persistence; defaults next to ``history_file``."""
+        if self.paths.wisdom_store is not None:
+            return self.paths.wisdom_store
+        return self.history_file.parent / "wisdom_chroma"
+
     @classmethod
     def sub_workspace_config(cls, parent: "HarnessConfig", module_dir: Path) -> "HarnessConfig":
         """Build a HarnessConfig for a module sub-workspace (isolated PLAN, history, spec)."""
@@ -216,6 +229,7 @@ class HarnessConfig:
             screenshot_target=module_dir / ".harness_screenshot.png",
             global_interface_doc=gi,
             interfaces_file=parent.paths.interfaces_file,
+            wisdom_store=None,
         )
         orch = OrchestrationConfig(
             mode="linear",
@@ -228,6 +242,7 @@ class HarnessConfig:
             epic_file=None,
             sub_workspace_isolation="subrepo",
             worktrees_root=None,
+            wisdom_rag=False,
         )
         return cls(
             project=parent.project,
@@ -302,6 +317,7 @@ class HarnessConfig:
             screenshot_target=_resolve(base, merged.get("screenshot_target")),
             global_interface_doc=_resolve(base, merged.get("global_interface_doc")),
             interfaces_file=_resolve(base, merged.get("interfaces_file")),
+            wisdom_store=_resolve(base, merged.get("wisdom_store")),
         )
 
         runtime = RuntimeConfig(
@@ -334,6 +350,7 @@ class HarnessConfig:
             epic_file=epic_resolved,
             sub_workspace_isolation=iso,
             worktrees_root=wtr,
+            wisdom_rag=bool(merged.get("wisdom_rag", False)),
         )
 
         cfg = cls(
@@ -386,6 +403,7 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
     out["interactive_mode"] = raw.get("interactive_mode")
     out["vision_rubric"] = raw.get("vision_rubric")
     out["distillation_export"] = raw.get("distillation_export")
+    out["wisdom_store"] = raw.get("wisdom_store")
     out["prompt_buffer"] = raw.get("prompt_buffer")
     out["screenshot_target"] = raw.get("screenshot_target")
     out["epic_file"] = raw.get("epic_file")
@@ -402,6 +420,8 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
         out["test_first"] = raw["test_first"]
     if raw.get("contract_negotiation_max_retries") is not None:
         out["contract_negotiation_max_retries"] = raw["contract_negotiation_max_retries"]
+    if raw.get("wisdom_rag") is not None:
+        out["wisdom_rag"] = raw["wisdom_rag"]
 
     proj = raw.get("project") or {}
     if isinstance(proj, dict):
@@ -424,6 +444,7 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
             ("distillation_export", "distillation_export"),
             ("prompt_buffer", "prompt_buffer"),
             ("screenshot_target", "screenshot_target"),
+            ("wisdom_store", "wisdom_store"),
         ):
             if paths.get(yaml_key) is not None:
                 out[key] = paths[yaml_key]
@@ -482,6 +503,8 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
             out["sub_workspace_isolation"] = orch["sub_workspace_isolation"]
         if orch.get("worktrees_root") is not None:
             out["worktrees_root"] = orch["worktrees_root"]
+        if orch.get("wisdom_rag") is not None:
+            out["wisdom_rag"] = orch["wisdom_rag"]
 
     # evaluator strategy: nested evaluation.strategy > flat evaluator
     if out.get("eval_strategy") is not None:
