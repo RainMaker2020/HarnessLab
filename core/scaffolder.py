@@ -1,4 +1,4 @@
-"""Scaffolder — Level 0: turn a vague idea into HarnessingLab specifications via the planner model."""
+"""Scaffolder — Level 0: turn a vague idea into HarnessLab specifications via the planner model."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Optional, TextIO
 from exceptions import HarnessError
 
 SCAFFOLDER_SYSTEM_PROMPT = (
-    "You are the Senior Architect for HarnessingLab. Your goal is to translate a vague human idea "
+    "You are the Senior Architect for HarnessLab. Your goal is to translate a vague human idea "
     'into a set of rigid, AI-executable specifications. You know that the "Worker" is an AI '
     '(Claude 3.5 Haiku) and the "Evaluator" is a ruthless "Hater" (Claude 3.7). Write specifications '
     "that are clear, atomic, and testable. Prevent AI-slop by mandating custom UI and strict typography."
@@ -39,10 +39,6 @@ class Scaffolder:
             if p.exists() and p.is_file():
                 out.append(p)
         return out
-
-    def would_overwrite_existing(self) -> bool:
-        """True if ARCHITECTURE.md or SPEC.md (per config paths) already exist."""
-        return bool(self.existing_spec_conflicts())
 
     def run(
         self,

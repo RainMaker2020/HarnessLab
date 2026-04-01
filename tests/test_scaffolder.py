@@ -33,7 +33,7 @@ def _sample_stdout() -> str:
 
 
 def test_system_prompt_constant():
-    assert "Senior Architect for HarnessingLab" in SCAFFOLDER_SYSTEM_PROMPT
+    assert "Senior Architect for HarnessLab" in SCAFFOLDER_SYSTEM_PROMPT
     assert "Hater" in SCAFFOLDER_SYSTEM_PROMPT
 
 
@@ -88,12 +88,79 @@ def test_run_writes_files(tmp_path):
     proc.stdout = _sample_stdout()
     proc.stderr = ""
 
-    with patch("scaffolder.subprocess.run", return_value=proc):
+    with patch("scaffolder.subprocess.run", return_value=proc) as mock_run:
         Scaffolder(cfg, router).run("Build a thing", force=True)
 
     assert "# Arch" in arch.read_text()
     assert "# Spec" in spec.read_text()
     assert "TASK_01" in plan.read_text()
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args
+    cmd = call_args[0][0]
+    assert cmd[0] == "claude"
+    assert cmd[1] == "--print"
+    assert cmd[-2:] == ["--model", "claude-3-7-sonnet"]
+    assert "Build a thing" in cmd[2]
+
+
+def _minimal_cfg(tmp_path):
+    return type(
+        "C",
+        (),
+        {
+            "architecture_doc": tmp_path / "a.md",
+            "spec_doc": tmp_path / "s.md",
+            "plan_file": tmp_path / "p.md",
+            "planner_timeout_seconds": 30,
+        },
+    )()
+
+
+def test_invoke_planner_nonzero_exit_raises(tmp_path):
+    cfg = _minimal_cfg(tmp_path)
+    router = ModelRouter(type("M", (), {"models": {"planner": "p-model"}})())
+    proc = MagicMock(spec=subprocess.CompletedProcess)
+    proc.returncode = 1
+    proc.stdout = ""
+    proc.stderr = "boom"
+
+    with patch("scaffolder.subprocess.run", return_value=proc):
+        with pytest.raises(HarnessError, match="Scaffolder failed"):
+            Scaffolder(cfg, router)._invoke_planner("x")
+
+
+def test_invoke_planner_empty_stdout_raises(tmp_path):
+    cfg = _minimal_cfg(tmp_path)
+    router = ModelRouter(type("M", (), {"models": {"planner": "p-model"}})())
+    proc = MagicMock(spec=subprocess.CompletedProcess)
+    proc.returncode = 0
+    proc.stdout = "   "
+    proc.stderr = ""
+
+    with patch("scaffolder.subprocess.run", return_value=proc):
+        with pytest.raises(HarnessError, match="empty output"):
+            Scaffolder(cfg, router)._invoke_planner("x")
+
+
+def test_invoke_planner_timeout_raises(tmp_path):
+    cfg = _minimal_cfg(tmp_path)
+    router = ModelRouter(type("M", (), {"models": {"planner": "p"}})())
+
+    def _timeout(*_a, **_k):
+        raise subprocess.TimeoutExpired(cmd=["claude"], timeout=30)
+
+    with patch("scaffolder.subprocess.run", side_effect=_timeout):
+        with pytest.raises(HarnessError, match="timed out"):
+            Scaffolder(cfg, router)._invoke_planner("x")
+
+
+def test_invoke_planner_missing_claude_raises(tmp_path):
+    cfg = _minimal_cfg(tmp_path)
+    router = ModelRouter(type("M", (), {"models": {"planner": "p"}})())
+
+    with patch("scaffolder.subprocess.run", side_effect=FileNotFoundError()):
+        with pytest.raises(HarnessError, match="claude CLI not found"):
+            Scaffolder(cfg, router)._invoke_planner("x")
 
 
 def test_run_abort_when_existing_and_no_force(tmp_path):
