@@ -12,6 +12,7 @@ class FakeConfig:
     build_command = "echo 'ok'"
     workspace_dir = Path("/tmp/workspace")
     playwright_target = "index.html"
+    vision_rubric = ""
     models = {
         "planner": "claude-3-7-sonnet",
         "generator": "claude-3-5-haiku",
@@ -89,7 +90,7 @@ def test_take_screenshot_returns_failure_if_target_missing(tmp_path):
     ev = PlaywrightVisualEvaluator(config)
 
     result = ev._take_screenshot(
-        target_path=tmp_path / "nonexistent.html",
+        target=tmp_path / "nonexistent.html",
         screenshot_path=tmp_path / ".harness_screenshot.png",
     )
 
@@ -106,7 +107,7 @@ def test_take_screenshot_returns_failure_when_sync_playwright_is_none(tmp_path):
 
     with patch("evaluator.sync_playwright", None):
         result = ev._take_screenshot(
-            target_path=target,
+            target=target,
             screenshot_path=tmp_path / ".harness_screenshot.png",
         )
 
@@ -135,7 +136,7 @@ def test_take_screenshot_succeeds_with_mocked_playwright(tmp_path):
     with patch("evaluator.sync_playwright", return_value=mock_context_manager):
         # simulate screenshot writing the file
         screenshot_path.write_bytes(b"fakepng")
-        result = ev._take_screenshot(target_path=target, screenshot_path=screenshot_path)
+        result = ev._take_screenshot(target=target, screenshot_path=screenshot_path)
 
     assert result.passed is True
     mock_page.goto.assert_called_once()

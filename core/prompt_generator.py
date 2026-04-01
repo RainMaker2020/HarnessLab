@@ -78,7 +78,10 @@ class PromptGenerator:
                 "Diagnose the root cause before writing any code. Do not repeat the same mistake.",
             ]
 
-        prompt_path = self.config.workspace_dir / ".harness_prompt.md"
+        prompt_path = getattr(self.config, "prompt_buffer_path", None) or (
+            self.config.workspace_dir / ".harness_prompt.md"
+        )
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text("\n".join(sections))
         return prompt_path
 

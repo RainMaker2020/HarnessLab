@@ -2,12 +2,14 @@ import json
 import pytest
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from main import Orchestrator, HarnessConfig
+from exceptions import HarnessError
+from main import Orchestrator
 from evaluator import ExitCodeEvaluator
 from ui import ObservationDeck
 
@@ -51,13 +53,23 @@ def config(harness_root):
         evaluator_type = "exit_code"
         interactive_mode = False  # off by default; individual tests override
         playwright_target = "index.html"
+        vision_rubric = "Test rubric"
+        auto_rollback = True
+        distillation_mode = False
+        distillation_export = None
+        prompt_buffer_path = workspace / ".harness_prompt.md"
+        project = SimpleNamespace(name="test-harness")
 
     return Cfg()
 
 
 def make_orch(config):
     """Build an Orchestrator with injected ExitCodeEvaluator and ObservationDeck."""
-    return Orchestrator(config, evaluator=ExitCodeEvaluator(config), ui=ObservationDeck())
+    return Orchestrator(
+        config,
+        evaluator=ExitCodeEvaluator(config),
+        ui=ObservationDeck(),
+    )
 
 
 def make_proc(returncode=0, stdout="done", stderr=""):
@@ -295,3 +307,51 @@ def test_interactive_override_falls_through_to_failure_when_reeval_fails(config)
 
     assert exc.value.code == 1
     mock_rollback.assert_called()
+
+
+def test_distillation_requires_export_path(config):
+    """orchestration.distillation_mode without paths.distillation_export must fail fast."""
+    config.distillation_mode = True
+    config.distillation_export = None
+    with pytest.raises(HarnessError, match="distillation_export"):
+        make_orch(config)
+
+
+def test_distillation_appends_jsonl(config, harness_root):
+    """Successful commit with distillation logs prompt + git diff to JSONL."""
+    export = harness_root / "docs" / "traj.jsonl"
+    config.distillation_mode = True
+    config.distillation_export = export
+    orch = make_orch(config)
+    task = orch.parser.next_task()
+    prompt_file = config.workspace_dir / ".harness_prompt.md"
+    prompt_file.write_text("PROMPT BODY")
+    with patch.object(orch.git, "commit"), \
+         patch.object(orch.prompt_gen, "write_changelog"), \
+         patch.object(orch.git, "diff_last_commit", return_value="diff --git a/x\n"), \
+         patch.object(orch.parser, "mark_done"), \
+         patch.object(orch.ui, "success"):
+        orch._do_commit(task, prompt_file=prompt_file)
+
+    line = export.read_text().strip().splitlines()[0]
+    data = json.loads(line)
+    assert data["input"] == "PROMPT BODY"
+    assert "diff --git" in data["output_git_diff"]
+    assert data["task_id"] == "TASK_01"
+
+
+def test_auto_rollback_false_skips_git_reset(config):
+    """When auto_rollback is false, failure path must not call git rollback."""
+    config.auto_rollback = False
+    orch = make_orch(config)
+    with patch.object(orch.git, "ensure_repo"), \
+         patch.object(orch.git, "current_head", return_value="abc1234"), \
+         patch.object(orch.worker, "run", return_value=make_proc(1)), \
+         patch.object(orch.evaluator, "run", return_value=MagicMock(passed=False, output="fail", exit_code=1)), \
+         patch.object(orch.git, "commit") as mock_commit, \
+         patch.object(orch.git, "rollback") as mock_rollback, \
+         pytest.raises(SystemExit):
+        orch._run_task(orch.parser.next_task())
+
+    mock_rollback.assert_not_called()
+    mock_commit.assert_not_called()

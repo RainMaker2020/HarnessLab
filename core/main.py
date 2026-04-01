@@ -5,7 +5,7 @@ Pipeline: PLAN.md → PromptGenerator → Worker (claude CLI) → BaseEvaluator 
 All sub-concerns live in their own modules:
   ui.py           — ObservationDeck (all terminal output)
   model_router.py — ModelRouter (dynamic model selection from harness.yaml)
-  docker_manager.py — DockerManager (sandbox container lifecycle)
+  sandbox.py — DockerManager (sandbox container lifecycle)
   evaluator.py    — BaseEvaluator + concrete implementations
   prompt_generator.py — PromptGenerator (prompt assembly)
 """
@@ -19,63 +19,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-import yaml
-
-from docker_manager import DockerManager, HarnessError
 from evaluator import BaseEvaluator, ExitCodeEvaluator, PlaywrightVisualEvaluator
+from exceptions import HarnessError
+from harness_config import HarnessConfig
 from model_router import ModelRouter
 from prompt_generator import PromptGenerator
+from sandbox import DockerManager
+from trajectory_logger import TrajectoryLogger
 from ui import ObservationDeck
 
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
 EXIT_SOS = 2
-
-
-@dataclass
-class HarnessConfig:
-    """Responsibility: Loaded from harness.yaml; single source of truth for all paths and settings.
-
-    Every component receives a HarnessConfig rather than raw strings, ensuring that
-    harness.yaml is the only file a human needs to edit to change runtime behaviour.
-    """
-
-    workspace_dir: Path
-    architecture_doc: Path
-    spec_doc: Path
-    plan_file: Path
-    history_file: Path
-    build_command: str
-    max_retries: int
-    models: dict
-    worker_mode: str
-    evaluator_type: str
-    interactive_mode: bool
-    playwright_target: str
-
-    @classmethod
-    def from_yaml(cls, path: Path) -> "HarnessConfig":
-        """Parse harness.yaml relative to its own directory."""
-        raw = yaml.safe_load(path.read_text())
-        base = path.parent
-        return cls(
-            workspace_dir=(base / raw["workspace_dir"]).resolve(),
-            architecture_doc=(base / raw["architecture_doc"]).resolve(),
-            spec_doc=(base / raw["spec_doc"]).resolve(),
-            plan_file=(base / raw["plan_file"]).resolve(),
-            history_file=(base / raw["history_file"]).resolve(),
-            build_command=raw["build_command"],
-            max_retries=raw.get("max_retries", 3),
-            models=raw.get("models") or {
-                "planner": raw.get("claude_model", "claude-sonnet-4-6"),
-                "generator": raw.get("claude_model", "claude-sonnet-4-6"),
-                "evaluator": raw.get("vision_model", "claude-3-5-sonnet-20241022"),
-            },
-            worker_mode=raw.get("worker_mode", "local"),
-            evaluator_type=raw.get("evaluator", "exit_code"),
-            interactive_mode=raw.get("interactive_mode", False),
-            playwright_target=raw.get("playwright_target", "index.html"),
-        )
 
 
 @dataclass
@@ -199,6 +154,17 @@ class GitManager:
         self._run("git", "reset", "--hard")
         self._run("git", "clean", "-fd")
 
+    def diff_last_commit(self) -> str:
+        """Return the unified diff introduced by the most recent commit."""
+        count = self._run("git", "rev-list", "--count", "HEAD").stdout.strip()
+        if count == "0":
+            return ""
+        if count == "1":
+            r = self._run("git", "show", "--no-color", "HEAD")
+            return (r.stdout or "").strip()
+        r = self._run("git", "diff", "--no-color", "HEAD~1", "HEAD")
+        return (r.stdout or "").strip()
+
 
 class Worker:
     """Responsibility: Executes the claude CLI against the workspace.
@@ -275,27 +241,40 @@ class Orchestrator:
         """Wire all components. Evaluator is injected for swappability."""
         self.config = config
         self.ui = ui
+        if config.distillation_mode and config.distillation_export is None:
+            raise HarnessError(
+                "paths.distillation_export is required when orchestration.distillation_mode is true."
+            )
+        self.trajectory_logger: Optional[TrajectoryLogger] = (
+            TrajectoryLogger(config.distillation_export) if config.distillation_mode else None
+        )
         self.git = GitManager(config.workspace_dir, ui)
         self.history = HistoryManager(config.history_file)
         self.prompt_gen = PromptGenerator(config)
         self.evaluator = evaluator
         self.parser = PlanParser(config.plan_file)
         model_router = ModelRouter(config)
-        docker_manager = DockerManager(config, ui) if config.worker_mode == "docker" else None
-        self.worker = Worker(config, model_router, docker_manager)
+        self._docker_manager = DockerManager(config, ui) if config.worker_mode == "docker" else None
+        self.worker = Worker(config, model_router, self._docker_manager)
 
     def run(self) -> None:
         """Process all unchecked tasks in PLAN.md sequentially."""
         self.git.ensure_repo()
         self.ui.harness_started()
 
-        while True:
-            task = self.parser.next_task()
-            if task is None:
-                self.ui.all_done()
-                break
-            self.ui.task_start(task.task_id, task.description)
-            self._run_task(task)
+        if self._docker_manager is not None:
+            self._docker_manager.start()
+        try:
+            while True:
+                task = self.parser.next_task()
+                if task is None:
+                    self.ui.all_done()
+                    break
+                self.ui.task_start(task.task_id, task.description)
+                self._run_task(task)
+        finally:
+            if self._docker_manager is not None:
+                self._docker_manager.stop()
 
     def _run_task(self, task: Task) -> None:
         """Attempt a task up to max_retries times with rollback on failure."""
@@ -336,7 +315,7 @@ class Orchestrator:
 
                 if decision == "commit":
                     # Human approves — force commit regardless of evaluator
-                    self._do_commit(task, tag="[human-approved]")
+                    self._do_commit(task, tag="[human-approved]", prompt_file=prompt_file)
                     return
 
                 elif decision == "rollback":
@@ -353,13 +332,13 @@ class Orchestrator:
                     eval_result = self.evaluator.run()
                     if eval_result.passed:
                         # Re-evaluation passed — commit the human's manual fix
-                        self._do_commit(task, tag="[human-override]")
+                        self._do_commit(task, tag="[human-override]", prompt_file=prompt_file)
                         return
                     # Re-evaluation still failed — fall through to normal failure path
 
             # 5a. SUCCESS — both gates pass (or override re-eval failed, fall to 5b)
             if claude_ok and eval_result.passed:
-                self._do_commit(task)
+                self._do_commit(task, prompt_file=prompt_file)
                 return
 
             # 5b. FAILURE — rollback, log, retry
@@ -370,11 +349,14 @@ class Orchestrator:
                 self.ui.circuit_breaker(task.task_id, self.config.max_retries)
                 sys.exit(1)
 
-    def _do_commit(self, task: Task, tag: str = "") -> None:
-        """Write changelog, commit to git, and mark the task done in PLAN.md."""
+    def _do_commit(self, task: Task, tag: str = "", prompt_file: Optional[Path] = None) -> None:
+        """Write changelog, commit to git, optional trajectory log, mark task done in PLAN.md."""
         commit_msg = f"feat: {task.task_id} completed{f' {tag}' if tag else ''}"
         self.prompt_gen.write_changelog(task.task_id, task.description)
         self.git.commit(commit_msg)
+        if self.trajectory_logger is not None and prompt_file is not None:
+            prompt_text = prompt_file.read_text() if prompt_file.exists() else ""
+            self.trajectory_logger.append(task.task_id, prompt_text, self.git.diff_last_commit())
         self.parser.mark_done(task)
         self.ui.success(task.task_id)
 
@@ -397,7 +379,10 @@ class Orchestrator:
             "claude_stdout": result.stdout,
             "claude_stderr": result.stderr,
         })
-        self.git.rollback()
+        if self.config.auto_rollback:
+            self.git.rollback()
+        else:
+            self.ui.info("auto_rollback is false — workspace left dirty for inspection.")
         self.ui.failure(attempt, reason)
 
 

@@ -1,15 +1,62 @@
-workspace_dir: ./workspace
-architecture_doc: ./ARCHITECTURE.md
-spec_doc: ./SPEC.md
-plan_file: ./workspace/PLAN.md
-history_file: ./docs/history.json
-build_command: "echo 'EVALUATOR_PLACEHOLDER: always passes'"
-max_retries: 3
+# ==========================================
+# HarnessLab: Industrial Production Control Plane
+# ==========================================
+project:
+  name: "Industrial-Todo-Factory"
+  version: "1.2.0"
+  env: "production"
+
+# ------------------------------------------
+# THE AIR-GAP: Path Management
+# ------------------------------------------
+paths:
+  architecture_doc: "./ARCHITECTURE.md"
+  specification_doc: "./SPEC.md"
+  history_log: "./docs/history.json"
+  distillation_export: "./docs/trajectories.jsonl"
+
+  workspace_dir: "./workspace"
+  plan_file: "./workspace/PLAN.md"
+  prompt_buffer: "./workspace/.harness_prompt.md"
+  screenshot_target: "./workspace/.harness_screenshot.png"
+
+# ------------------------------------------
+# THE EFFICIENCY ENGINE: Asymmetric Model Routing
+# ------------------------------------------
 models:
-  planner: "claude-3-7-sonnet"      # High-reasoning for task decomposition
-  generator: "claude-3-5-haiku"    # Low-cost, high-speed coding (The Worker)
-  evaluator: "claude-3-5-sonnet-20241022" # High-scrutiny reasoning (The Hater)
-worker_mode: local
-evaluator: exit_code
-interactive_mode: false
-playwright_target: index.html
+  planner: "claude-3-7-sonnet"
+  generator: "claude-3-5-haiku"
+  evaluator: "claude-3-7-sonnet"
+
+# ------------------------------------------
+# THE SANDBOX: Execution Environment
+# ------------------------------------------
+runtime:
+  mode: "local"
+  image: "harnesslab-sandbox:latest"
+  memory_limit: "2g"
+  network_access: false
+
+# ------------------------------------------
+# THE HATER: Quality Assurance Logic
+# ------------------------------------------
+evaluation:
+  strategy: "exit_code"
+  build_command: "echo 'EVALUATOR_PLACEHOLDER: always passes'"
+  playwright_target: "index.html"
+  vision_rubric: |
+    You are a senior UI/UX reviewer. Examine the screenshot against SPEC.md.
+    1. Does the UI use only generic Tailwind defaults? (If yes, score low and REJECT.)
+    2. Is the layout responsive and accessible?
+    3. Does the typography match the specification?
+    4. Are there visible 'AI slop' artifacts or placeholder text?
+    Score 1–10. If score < 8, include REJECT. If score >= 8, end with APPROVE.
+
+# ------------------------------------------
+# THE CIRCUIT BREAKER: Resilience & Economics
+# ------------------------------------------
+orchestration:
+  max_retries_per_task: 3
+  interactive_mode: false
+  auto_rollback: true
+  distillation_mode: false
