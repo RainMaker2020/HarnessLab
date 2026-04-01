@@ -26,9 +26,9 @@ paths:
 # THE EFFICIENCY ENGINE: Asymmetric Model Routing
 # ------------------------------------------
 models:
-  planner: "claude-3-7-sonnet"
-  generator: "claude-3-5-haiku"
-  evaluator: "claude-3-7-sonnet"
+  planner: "claude-opus-4-6"
+  generator: "claude-haiku-4-6"
+  evaluator: "claude-sonnet-4-6"
   contract_verifier: "claude-3-5-sonnet-20241022"
 
 # ------------------------------------------

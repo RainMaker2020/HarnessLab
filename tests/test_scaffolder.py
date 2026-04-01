@@ -81,7 +81,7 @@ def test_run_writes_files(tmp_path):
             "planner_timeout_seconds": 30,
         },
     )()
-    router = ModelRouter(type("M", (), {"models": {"planner": "claude-3-7-sonnet"}})())
+    router = ModelRouter(type("M", (), {"models": {"planner": "claude-sonnet-4-6"}})())
 
     proc = MagicMock(spec=subprocess.CompletedProcess)
     proc.returncode = 0
@@ -99,7 +99,7 @@ def test_run_writes_files(tmp_path):
     cmd = call_args[0][0]
     assert cmd[0] == "claude"
     assert cmd[1] == "--print"
-    assert cmd[-2:] == ["--model", "claude-3-7-sonnet"]
+    assert cmd[-2:] == ["--model", "claude-sonnet-4-6"]
     assert "Build a thing" in cmd[2]
 
 

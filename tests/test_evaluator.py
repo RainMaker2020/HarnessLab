@@ -40,7 +40,7 @@ class FakeConfig:
     playwright_target = "index.html"
     vision_rubric = ""
     models = {
-        "planner": "claude-3-7-sonnet",
+        "planner": "claude-sonnet-4-6",
         "generator": "claude-3-5-haiku",
         "evaluator": "claude-3-5-sonnet-20241022",
     }

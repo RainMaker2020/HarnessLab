@@ -69,8 +69,8 @@ def config(harness_root):
         build_command = "echo ok"
         max_retries = 3
         models = {
-            "planner": "claude-3-7-sonnet",
-            "generator": "claude-3-5-haiku",
+            "planner": "claude-sonnet-4-6",
+            "generator": "claude-sonnet-4-6",
             "evaluator": "claude-3-5-sonnet-20241022",
         }
         worker_mode = "local"
