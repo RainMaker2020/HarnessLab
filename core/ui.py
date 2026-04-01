@@ -170,5 +170,7 @@ class ObservationDeck:
         """Planner retries exhausted — wait for human to fix SPEC or contract file."""
         self._console.print(
             f"\n[bold red]Contract negotiation exhausted for {task_id}.[/bold red]\n"
-            "Edit SPEC.md or the contract test file, then press Enter to re-verify."
+            "Edit SPEC.md or the contract test file, then press Enter to re-verify.\n"
+            "[dim]To run the planner again instead of editing by hand, set env "
+            "HARNESS_REGENERATE_CONTRACT_AFTER_PAUSE=1 before pressing Enter.[/dim]"
         )

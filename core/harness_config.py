@@ -55,6 +55,8 @@ class EvaluationConfig:
     build_command: str
     playwright_target: str
     vision_rubric: str
+    contract_test_command: Optional[str] = None
+    planner_timeout_seconds: int = 900
 
 
 @dataclass
@@ -132,6 +134,14 @@ class HarnessConfig:
     @property
     def vision_rubric(self) -> str:
         return self.evaluation.vision_rubric
+
+    @property
+    def contract_test_command(self) -> Optional[str]:
+        return self.evaluation.contract_test_command
+
+    @property
+    def planner_timeout_seconds(self) -> int:
+        return self.evaluation.planner_timeout_seconds
 
     @property
     def distillation_export(self) -> Optional[Path]:
@@ -327,11 +337,19 @@ class HarnessConfig:
             network_access=bool(merged.get("runtime_network_access", True)),
         )
 
+        ct_cmd = merged.get("contract_test_command")
+        if ct_cmd is not None and str(ct_cmd).strip() == "":
+            ct_cmd = None
+        elif ct_cmd is not None:
+            ct_cmd = str(ct_cmd).strip()
+
         evaluation = EvaluationConfig(
             strategy=eval_strategy,
             build_command=str(merged["build_command"]),
             playwright_target=str(merged.get("playwright_target") or "index.html"),
             vision_rubric=vision_rubric,
+            contract_test_command=ct_cmd,
+            planner_timeout_seconds=int(merged.get("planner_timeout_seconds") or 900),
         )
 
         orch_mode = str(merged.get("orchestration_mode") or "linear").strip().lower()
@@ -402,6 +420,8 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
     out["worker_mode"] = raw.get("worker_mode")
     out["interactive_mode"] = raw.get("interactive_mode")
     out["vision_rubric"] = raw.get("vision_rubric")
+    out["contract_test_command"] = raw.get("contract_test_command")
+    out["planner_timeout_seconds"] = raw.get("planner_timeout_seconds")
     out["distillation_export"] = raw.get("distillation_export")
     out["wisdom_store"] = raw.get("wisdom_store")
     out["prompt_buffer"] = raw.get("prompt_buffer")
@@ -480,6 +500,10 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
             out["playwright_target"] = evaluation["playwright_target"]
         if evaluation.get("vision_rubric") is not None:
             out["vision_rubric"] = evaluation["vision_rubric"]
+        if evaluation.get("contract_test_command") is not None:
+            out["contract_test_command"] = evaluation["contract_test_command"]
+        if evaluation.get("planner_timeout_seconds") is not None:
+            out["planner_timeout_seconds"] = evaluation["planner_timeout_seconds"]
 
     orch = raw.get("orchestration") or {}
     if isinstance(orch, dict):

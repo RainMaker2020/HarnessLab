@@ -5,7 +5,33 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from evaluator import ExitCodeEvaluator, EvalResult, BaseEvaluator, PlaywrightVisualEvaluator
+from evaluator import (
+    BaseEvaluator,
+    EvalResult,
+    ExitCodeEvaluator,
+    PlaywrightVisualEvaluator,
+    parse_trailing_verdict,
+)
+
+
+def test_parse_trailing_verdict_last_line_approve():
+    ok, amb = parse_trailing_verdict("Rationale\n\nAPPROVE")
+    assert ok is True and amb is None
+
+
+def test_parse_trailing_verdict_last_line_reject():
+    ok, amb = parse_trailing_verdict("Rationale\n\nREJECT")
+    assert ok is False and amb is None
+
+
+def test_parse_trailing_verdict_last_token():
+    ok, amb = parse_trailing_verdict("Score low.\nVerdict: APPROVE")
+    assert ok is True and amb is None
+
+
+def test_parse_trailing_verdict_ambiguous():
+    ok, amb = parse_trailing_verdict("Maybe yes maybe no")
+    assert ok is False and amb is not None
 
 
 class FakeConfig:

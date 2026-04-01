@@ -45,7 +45,12 @@ runtime:
 # ------------------------------------------
 evaluation:
   strategy: "exit_code"
+  # Primary gate (always). With test_first, also set contract_test_command so the locked
+  # *.contract.test.ts file is executed, or fold tests into build_command (e.g. npm test).
   build_command: "echo 'EVALUATOR_PLACEHOLDER: always passes'"
+  # Optional when test_first: shell command with {task_id}, {contract_rel}, {contract_path}
+  # contract_test_command: "npx vitest run {contract_rel}"
+  planner_timeout_seconds: 900
   playwright_target: "index.html"
   vision_rubric: |
     You are a senior UI/UX reviewer. Examine the screenshot against SPEC.md.

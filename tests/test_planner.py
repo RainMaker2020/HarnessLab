@@ -36,6 +36,13 @@ def test_strip_code_fence():
     assert "const x" in ContractPlanner._strip_code_fence(raw)
 
 
+def test_strip_code_fence_extracts_first_block_when_prose_prefix():
+    raw = "Here is the file:\n```ts\nconst a = 1;\n```\nThanks."
+    out = ContractPlanner._strip_code_fence(raw)
+    assert "const a = 1" in out
+    assert "Thanks" not in out
+
+
 def test_generate_contract_writes_file(tmp_ws):
     cfg = tmp_ws
     router = ModelRouter(type("M", (), {"models": {"planner": "p"}})())
@@ -45,12 +52,14 @@ def test_generate_contract_writes_file(tmp_ws):
     proc.stdout = "import { expect, test } from 'vitest';\ntest('a', () => expect(1).toBe(1));"
     proc.stderr = ""
 
-    with patch("planner.subprocess.run", return_value=proc):
+    with patch("planner.subprocess.run", return_value=proc) as mock_run:
         planner = ContractPlanner(cfg, router)
         path = planner.generate_contract("TASK_01", "Do the thing")
 
     assert path.name == "TASK_01.contract.test.ts"
     assert "vitest" in path.read_text()
+    mock_run.assert_called_once()
+    assert mock_run.call_args.kwargs.get("timeout") == 900
 
 
 def test_generate_contract_claude_failure_raises(tmp_ws):

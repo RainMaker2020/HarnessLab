@@ -24,13 +24,20 @@ class ContractPlanner:
         spec_text = self._config.spec_doc.read_text()
         prompt = self._build_planner_prompt(spec_text, task_id, task_description)
         model_args = self._router.get_model_args("planner")
+        timeout = int(getattr(self._config, "planner_timeout_seconds", None) or 900)
         try:
             result = subprocess.run(
                 ["claude", "--print", prompt] + model_args,
                 cwd=self._config.workspace_dir,
                 capture_output=True,
                 text=True,
+                timeout=timeout,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise HarnessError(
+                f"Contract planner timed out after {timeout}s. "
+                "Increase evaluation.planner_timeout_seconds in harness.yaml if needed."
+            ) from exc
         except FileNotFoundError as exc:
             raise HarnessError(
                 "claude CLI not found. Install Anthropic Claude Code and ensure `claude` is on PATH."
@@ -71,9 +78,12 @@ class ContractPlanner:
 
     @staticmethod
     def _strip_code_fence(text: str) -> str:
-        """Remove optional ```ts / ``` fences from model output."""
+        """Remove ``` fences; prefer the first fenced block if the model added prose around it."""
         t = text.strip()
         m = re.match(r"^```(?:typescript|ts|javascript|js)?\s*\n([\s\S]*?)\n```\s*$", t)
         if m:
             return m.group(1).strip()
+        m2 = re.search(r"```(?:typescript|ts|javascript|js)?\s*\n([\s\S]*?)\n```", t)
+        if m2:
+            return m2.group(1).strip()
         return t

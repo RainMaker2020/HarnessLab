@@ -45,6 +45,68 @@ class EvalResult:
     cross_file_regression: bool = False
 
 
+def parse_trailing_verdict(text: str) -> tuple[bool, Optional[str]]:
+    """Parse APPROVE/REJECT from the last non-empty line (avoids accidental REJECT substrings).
+
+    Returns (passed, ambiguity_note). ambiguity_note is set only when the verdict cannot be read.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False, "Empty model response"
+
+    lines = [ln.strip() for ln in stripped.splitlines() if ln.strip()]
+    last = lines[-1]
+    for ch in ("*", "`", '"', "'"):
+        last = last.replace(ch, "")
+    last = last.strip().rstrip(".")
+
+    upper = last.upper()
+    if upper == "APPROVE":
+        return True, None
+    if upper == "REJECT":
+        return False, None
+
+    if ":" in last:
+        tail = last.split(":")[-1].strip().upper().rstrip(".")
+        if tail == "APPROVE":
+            return True, None
+        if tail == "REJECT":
+            return False, None
+
+    words = last.split()
+    if words:
+        tok = words[-1].upper().strip(".,;:!?")
+        if tok == "APPROVE":
+            return True, None
+        if tok == "REJECT":
+            return False, None
+
+    return False, (
+        f"Ambiguous verdict — end the response with a final line of exactly APPROVE or REJECT "
+        f"(got: {last!r})"
+    )
+
+
+def anthropic_response_text(message: object) -> str:
+    """Safely extract text from an Anthropic Messages API response."""
+    blocks = getattr(message, "content", None)
+    if not blocks:
+        return ""
+    for block in blocks:
+        if getattr(block, "type", None) == "text":
+            t = getattr(block, "text", None)
+            if t is not None:
+                return str(t)
+    try:
+        first = blocks[0]
+        t = getattr(first, "text", None)
+        if t is not None:
+            return str(t)
+    except (IndexError, TypeError, AttributeError):
+        pass
+    return ""
+
+
 _RE_FILE_IN_ERR = re.compile(
     r"(?:^|[\s\(\[])([\w./@-]+\.(?:ts|tsx|js|jsx|mjs|cjs)):(\d+)(?::\d+)?"
 )
@@ -387,11 +449,21 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
                 ],
             )
 
-            response_text = message.content[0].text
-            passed = "REJECT" not in response_text.upper()
+            response_text = anthropic_response_text(message)
+            if not response_text.strip():
+                return EvalResult(
+                    passed=False,
+                    output="Anthropic returned no text content in the vision response.",
+                    exit_code=1,
+                )
+            passed, amb = parse_trailing_verdict(response_text)
+            out = response_text
+            if amb is not None:
+                out = f"{response_text}\n---\n{amb}"
+                passed = False
             return EvalResult(
                 passed=passed,
-                output=response_text,
+                output=out,
                 exit_code=0 if passed else 1,
             )
         except anthropic.AuthenticationError as exc:
@@ -402,9 +474,9 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
             )
         except anthropic.APIError as exc:
             return EvalResult(passed=False, output=f"Anthropic API error: {exc}", exit_code=1)
-        except OSError as exc:
+        except (OSError, AttributeError, TypeError, IndexError) as exc:
             return EvalResult(
-                passed=False, output=f"Could not read screenshot file: {exc}", exit_code=1
+                passed=False, output=f"Could not read screenshot file or parse response: {exc}", exit_code=1
             )
 
 
@@ -463,11 +535,21 @@ class ContractVerifier:
                 max_tokens=2048,
                 messages=[{"role": "user", "content": user_block}],
             )
-            response_text = message.content[0].text
-            passed = "REJECT" not in response_text.upper()
+            response_text = anthropic_response_text(message)
+            if not response_text.strip():
+                return EvalResult(
+                    passed=False,
+                    output="Anthropic returned no text content in the contract verification response.",
+                    exit_code=1,
+                )
+            passed, amb = parse_trailing_verdict(response_text)
+            out = response_text
+            if amb is not None:
+                out = f"{response_text}\n---\n{amb}"
+                passed = False
             return EvalResult(
                 passed=passed,
-                output=response_text,
+                output=out,
                 exit_code=0 if passed else 1,
             )
         except anthropic.AuthenticationError as exc:
@@ -478,5 +560,5 @@ class ContractVerifier:
             )
         except anthropic.APIError as exc:
             return EvalResult(passed=False, output=f"Anthropic API error: {exc}", exit_code=1)
-        except OSError as exc:
-            return EvalResult(passed=False, output=f"Could not read files: {exc}", exit_code=1)
+        except (OSError, AttributeError, TypeError, IndexError) as exc:
+            return EvalResult(passed=False, output=f"Could not read files or parse response: {exc}", exit_code=1)

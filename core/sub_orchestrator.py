@@ -8,6 +8,7 @@ Refactored from the former linear Orchestrator (main.py).
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from typing import Optional
 from evaluator import (
     BaseEvaluator,
     ContractVerifier,
+    EvalResult,
     ExitCodeEvaluator,
     PlaywrightVisualEvaluator,
 )
@@ -41,6 +43,37 @@ from wisdom_rag import WisdomRAG, maybe_wisdom_rag
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
 EXIT_SOS = 2
+
+
+def _expand_contract_test_command(template: str, task_id: str, workspace: Path) -> str:
+    """Substitute placeholders in evaluation.contract_test_command."""
+    rel = f"{task_id}.contract.test.ts"
+    path = workspace / rel
+    return (
+        template.replace("{task_id}", task_id)
+        .replace("{contract_rel}", rel)
+        .replace("{contract_path}", str(path.resolve()))
+    )
+
+
+def _merge_eval_results(a: EvalResult, b: EvalResult) -> EvalResult:
+    """Run build/evaluator first; contract tests only if the primary gate passed."""
+    cfr = bool(getattr(a, "cross_file_regression", False) or getattr(b, "cross_file_regression", False))
+    if not a.passed:
+        return EvalResult(passed=False, output=a.output, exit_code=a.exit_code, cross_file_regression=cfr)
+    if not b.passed:
+        return EvalResult(
+            passed=False,
+            output=(a.output + "\n--- contract tests ---\n" + b.output).strip(),
+            exit_code=b.exit_code if b.exit_code else 1,
+            cross_file_regression=cfr,
+        )
+    return EvalResult(
+        passed=True,
+        output=(a.output + "\n--- contract tests ---\n" + b.output).strip(),
+        exit_code=0,
+        cross_file_regression=cfr,
+    )
 
 
 @dataclass
@@ -154,8 +187,16 @@ class GitManager:
         """Stage only the given paths (relative to workspace) and commit."""
         for p in paths:
             rel = p.resolve().relative_to(self.workspace_dir.resolve())
-            self._run("git", "add", str(rel))
-        self._run("git", "commit", "-m", message)
+            r = self._run("git", "add", str(rel))
+            if r.returncode != 0:
+                raise HarnessError(
+                    f"git add failed for {rel}: {r.stderr.strip() or r.stdout.strip()}"
+                )
+        r = self._run("git", "commit", "-m", message)
+        if r.returncode != 0:
+            raise HarnessError(
+                f"git commit failed: {r.stderr.strip() or r.stdout.strip()}"
+            )
 
     def rollback(self) -> None:
         """Discard all uncommitted changes: reset tracked + clean untracked."""
@@ -323,7 +364,11 @@ class SubOrchestrator:
 
         self.ui.contract_human_pause(task.task_id)
         input()
-        path = self.contract_planner.contract_path(task.task_id)
+        regen = os.environ.get("HARNESS_REGENERATE_CONTRACT_AFTER_PAUSE", "").strip().lower()
+        if regen in ("1", "true", "yes"):
+            path = self.contract_planner.generate_contract(task.task_id, task.description)
+        else:
+            path = self.contract_planner.contract_path(task.task_id)
         if not path.exists():
             raise HarnessError(
                 f"Expected contract file after human pause: {path}. "
@@ -387,6 +432,11 @@ class SubOrchestrator:
 
             edited_paths = self.git.list_changed_files_relative()
             eval_result = self.evaluator.run(edited_paths=edited_paths)
+            if self.config.test_first and getattr(self.config, "contract_test_command", None):
+                eval_result = _merge_eval_results(
+                    eval_result,
+                    self._run_contract_tests(task, contract_path),
+                )
 
             if self.config.interactive_mode:
                 decision = self.ui.interactive_pause(task.task_id)
@@ -491,6 +541,40 @@ class SubOrchestrator:
         else:
             self.ui.info("auto_rollback is false — workspace left dirty for inspection.")
         self.ui.failure(attempt, reason)
+
+    def _run_contract_tests(self, task: Task, contract_path: Optional[Path]) -> EvalResult:
+        """Optional shell gate: run Vitest/Playwright against the locked contract (test_first)."""
+        tpl = getattr(self.config, "contract_test_command", None)
+        if not tpl or not str(tpl).strip():
+            return EvalResult(passed=True, output="(no evaluation.contract_test_command)", exit_code=0)
+        if not contract_path or not contract_path.exists():
+            return EvalResult(
+                passed=False,
+                output="evaluation.contract_test_command is set but the contract file is missing.",
+                exit_code=1,
+            )
+        cmd = _expand_contract_test_command(str(tpl).strip(), task.task_id, self.config.workspace_dir)
+        try:
+            r = subprocess.run(
+                cmd,
+                shell=True,
+                cwd=self.config.workspace_dir,
+                capture_output=True,
+                text=True,
+                timeout=3600,
+            )
+        except subprocess.TimeoutExpired:
+            return EvalResult(
+                passed=False,
+                output="Contract test command timed out after 3600s.",
+                exit_code=1,
+            )
+        combined = (r.stdout + r.stderr).strip()
+        return EvalResult(
+            passed=r.returncode == 0,
+            output=combined or "(no output)",
+            exit_code=r.returncode,
+        )
 
 
 def build_evaluator(config: HarnessConfig) -> BaseEvaluator:
