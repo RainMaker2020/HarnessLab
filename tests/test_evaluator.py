@@ -206,13 +206,14 @@ def test_vision_returns_fail_when_response_contains_reject(tmp_path):
 
 
 def test_vision_reject_check_is_case_insensitive(tmp_path):
+    """Last line must read REJECT; lowercase ``reject`` is treated as failure (verdict parser)."""
     config = FakeConfig()
     ev = PlaywrightVisualEvaluator(config)
     screenshot = tmp_path / ".harness_screenshot.png"
     screenshot.write_bytes(b"fakepng")
 
     mock_client = MagicMock()
-    mock_client.complete_text_with_vision_png.return_value = "Score: 3/10. reject this immediately."
+    mock_client.complete_text_with_vision_png.return_value = "Score: 3/10.\nreject"
 
     with patch("evaluator.brain_client_for_role", return_value=mock_client):
         result = ev._evaluate_with_vision(screenshot)

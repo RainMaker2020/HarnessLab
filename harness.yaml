@@ -28,7 +28,7 @@ paths:
 # ------------------------------------------
 # Model ids per role. For Brain API roles (evaluator, contract_verifier), optional
 # {role}_provider: anthropic | openai | openai-compatible
-# {role}_base_url: required when provider is openai-compatible (DeepSeek, Groq, Ollama, etc.)
+# {role}_base_url: required for openai-compatible; optional for openai (Azure OpenAI, proxy, etc.)
 models:
   planner: "claude-opus-4-6"
   generator: "claude-haiku-4-6"

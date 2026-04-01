@@ -278,10 +278,11 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
       2. Launch headless Chromium via Playwright, navigate to playwright_target
          (a static HTML file relative to workspace/), take a full-page screenshot.
       3. Send the screenshot to the configured Brain model (evaluator / evaluator_provider).
-      4. Ask: "Does this UI follow design principles? Score 1-10. If < 8, output REJECT."
-      5. Pass if the response does not contain "REJECT"; fail otherwise.
+      4. Rubric asks for a score; the model must end with a line of exactly APPROVE or REJECT
+         (see ``parse_trailing_verdict``).
+      5. Pass if the final line is APPROVE; fail if REJECT or ambiguous.
 
-    Activate by setting evaluator: playwright in harness.yaml.
+    Activate by setting evaluation.strategy to playwright (or multimodal) in harness.yaml.
     """
 
     SCREENSHOT_FILENAME = ".harness_screenshot.png"
@@ -323,7 +324,7 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
         if not screenshot_result.passed:
             return screenshot_result
 
-        # Step 3: Claude Vision quality gate
+        # Step 3: Brain LLM vision gate (provider from models.evaluator_provider)
         return self._evaluate_with_vision(screenshot_path)
 
     def _run_build(self, edited_paths: Optional[list[str]] = None) -> EvalResult:

@@ -51,8 +51,8 @@ class ModelRouter:
     def resolve(self, role: str) -> ModelRoleResolution:
         """Return model name and Brain provider settings for the orchestrator.
 
-        For ``evaluator`` and ``contract_verifier``, reads optional
-        ``{role}_provider`` (default ``anthropic``) and ``{role}_base_url``.
+        For ``evaluator`` and ``contract_verifier``, reads optional keys
+        ``<role>_provider`` (default ``anthropic``) and ``<role>_base_url``.
         Planner and generator return ``provider=None`` (Claude CLI only).
         """
         models = getattr(self.config, "models", {}) or {}

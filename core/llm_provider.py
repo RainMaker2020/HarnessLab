@@ -217,7 +217,8 @@ class LLMProviderFactory:
         if not pid or pid == "anthropic":
             return AnthropicLLMClient()
         if pid == "openai":
-            return OpenAILLMClient(base_url=None)
+            bu = str(base_url).strip() if base_url else None
+            return OpenAILLMClient(base_url=bu)
         if pid == "openai-compatible":
             if not base_url or not str(base_url).strip():
                 raise ValueError(
