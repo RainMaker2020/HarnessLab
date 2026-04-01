@@ -59,6 +59,8 @@ def config(harness_root):
         distillation_export = None
         prompt_buffer_path = workspace / ".harness_prompt.md"
         project = SimpleNamespace(name="test-harness")
+        test_first = False
+        contract_negotiation_max_retries = 3
 
     return Cfg()
 
@@ -162,7 +164,7 @@ def test_retry_injects_last_failure_into_prompt(config):
     orch = make_orch(config)
     captured_failures = []
 
-    def capture_generate(task_id, task_description, attempt, last_failure):
+    def capture_generate(task_id, task_description, attempt, last_failure, **kwargs):
         """Record what was passed as last_failure on each call."""
         captured_failures.append(last_failure)
         path = config.workspace_dir / ".harness_prompt.md"
@@ -355,3 +357,28 @@ def test_auto_rollback_false_skips_git_reset(config):
 
     mock_rollback.assert_not_called()
     mock_commit.assert_not_called()
+
+
+def test_test_first_calls_negotiate_and_injects_contract_into_prompt(config):
+    """NEGOTIATE runs before GENERATE; prompt must reference the locked contract."""
+    config.test_first = True
+    orch = make_orch(config)
+    contract_path = config.workspace_dir / "TASK_01.contract.test.ts"
+
+    def fake_negotiate(task):
+        contract_path.write_text("import { expect, test } from 'vitest';\ntest('x', () => expect(1).toBe(1));")
+        return contract_path
+
+    with patch.object(orch, "_negotiate_contract", side_effect=fake_negotiate), \
+         patch.object(orch.git, "ensure_repo"), \
+         patch.object(orch.git, "current_head", return_value="abc1234"), \
+         patch.object(orch.worker, "run", return_value=make_proc(0)), \
+         patch.object(orch.evaluator, "run", return_value=MagicMock(passed=True, output="ok", exit_code=0)), \
+         patch.object(orch.git, "commit"), \
+         patch.object(orch.git, "rollback"):
+        orch._run_task(orch.parser.next_task())
+
+    prompt = (config.workspace_dir / ".harness_prompt.md").read_text()
+    assert "The CONTRACT" in prompt
+    assert "NOT allowed to modify" in prompt
+    assert "vitest" in prompt

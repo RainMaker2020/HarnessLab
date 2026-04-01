@@ -21,13 +21,14 @@ class PromptGenerator:
         task_description: str,
         attempt: int,
         last_failure: Optional[dict],
+        contract_path: Optional[Path] = None,
     ) -> Path:
         """Write workspace/.harness_prompt.md. Returns the path to the file."""
         architecture = self.config.architecture_doc.read_text()
         spec = self.config.spec_doc.read_text()
 
         sections = [
-            "# HarnessLab — Autonomous Task Prompt",
+            "# HarnessingLab v1.5 — Autonomous Task Prompt",
             f"**Generated:** {datetime.now(timezone.utc).isoformat()}",
             f"**Task:** {task_id} (Attempt {attempt})",
             "",
@@ -53,6 +54,22 @@ class PromptGenerator:
             "Complete this task fully. All changes must be made inside the current working directory.",
             "Do not modify files outside the scope of this task.",
         ]
+
+        if contract_path is not None and contract_path.exists():
+            contract_body = contract_path.read_text(encoding="utf-8")
+            sections += [
+                "",
+                "---",
+                "",
+                "## The CONTRACT (immutable)",
+                "",
+                "The following tests are your CONTRACT. You are successful ONLY when these tests pass.",
+                "You are NOT allowed to modify any `*.contract.test.ts` files or the contract file for this task.",
+                "",
+                "```typescript",
+                contract_body,
+                "```",
+            ]
 
         if last_failure is not None:
             sections += [

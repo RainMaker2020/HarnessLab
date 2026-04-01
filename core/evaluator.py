@@ -259,3 +259,77 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
             return EvalResult(
                 passed=False, output=f"Could not read screenshot file: {exc}", exit_code=1
             )
+
+
+CONTRACT_VERIFY_PROMPT = (
+    "You are a strict specification auditor. You will receive SPEC.md, a task ID and description, "
+    "and a TypeScript test file that is proposed as the formal contract for that task.\n\n"
+    "Decide whether the tests are a faithful 1:1 mapping of the requirements in SPEC.md that apply "
+    "to this task. Every requirement that SPEC imposes for this task must have a corresponding test; "
+    "tests must not assert unrelated or invented requirements.\n\n"
+    "Reply with a short rationale, then end with exactly one line: APPROVE or REJECT.\n"
+    "If anything is missing, ambiguous, or over-scoped, respond with REJECT."
+)
+
+
+class ContractVerifier:
+    """NEGOTIATE-phase gate: Sonnet verifies contract tests against SPEC (Anthropic Messages API)."""
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def verify_contract(
+        self, task_id: str, task_description: str, contract_path: Path
+    ) -> EvalResult:
+        """Return passed=True if the contract is an acceptable 1:1 map to SPEC for this task."""
+        if anthropic is None:
+            return EvalResult(
+                passed=False,
+                output="anthropic package not installed. Run: pip install anthropic",
+                exit_code=1,
+            )
+        if not contract_path.exists():
+            return EvalResult(
+                passed=False,
+                output=f"Contract file not found: {contract_path}",
+                exit_code=1,
+            )
+        spec_text = self.config.spec_doc.read_text()
+        contract_text = contract_path.read_text(encoding="utf-8")
+        models = getattr(self.config, "models", {}) or {}
+        model = models.get("contract_verifier") or models.get("evaluator") or "claude-3-5-sonnet-20241022"
+
+        user_block = (
+            f"{CONTRACT_VERIFY_PROMPT}\n\n"
+            f"## Task ID\n{task_id}\n\n"
+            f"## Task description\n{task_description}\n\n"
+            "## SPEC.md\n"
+            f"{spec_text}\n\n"
+            "## Proposed contract tests\n"
+            f"```typescript\n{contract_text}\n```\n"
+        )
+
+        try:
+            client = anthropic.Anthropic()
+            message = client.messages.create(
+                model=model,
+                max_tokens=2048,
+                messages=[{"role": "user", "content": user_block}],
+            )
+            response_text = message.content[0].text
+            passed = "REJECT" not in response_text.upper()
+            return EvalResult(
+                passed=passed,
+                output=response_text,
+                exit_code=0 if passed else 1,
+            )
+        except anthropic.AuthenticationError as exc:
+            return EvalResult(
+                passed=False,
+                output=f"Anthropic authentication failed. Check ANTHROPIC_API_KEY: {exc}",
+                exit_code=1,
+            )
+        except anthropic.APIError as exc:
+            return EvalResult(passed=False, output=f"Anthropic API error: {exc}", exit_code=1)
+        except OSError as exc:
+            return EvalResult(passed=False, output=f"Could not read files: {exc}", exit_code=1)

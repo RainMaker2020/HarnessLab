@@ -14,6 +14,7 @@ class ModelRouter:
         "planner": "claude-sonnet-4-6",
         "generator": "claude-sonnet-4-6",
         "evaluator": "claude-3-5-sonnet-20241022",
+        "contract_verifier": "claude-3-5-sonnet-20241022",
     }
 
     def __init__(self, config) -> None:

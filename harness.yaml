@@ -1,9 +1,9 @@
 # ==========================================
-# HarnessLab: Industrial Production Control Plane
+# HarnessingLab v1.5 — Industrial Production Control Plane
 # ==========================================
 project:
   name: "Industrial-Todo-Factory"
-  version: "1.2.0"
+  version: "1.5.0"
   env: "production"
 
 # ------------------------------------------
@@ -27,6 +27,7 @@ models:
   planner: "claude-3-7-sonnet"
   generator: "claude-3-5-haiku"
   evaluator: "claude-3-7-sonnet"
+  contract_verifier: "claude-3-5-sonnet-20241022"
 
 # ------------------------------------------
 # THE SANDBOX: Execution Environment
@@ -60,3 +61,5 @@ orchestration:
   interactive_mode: false
   auto_rollback: true
   distillation_mode: false
+  test_first: true
+  contract_negotiation_max_retries: 3

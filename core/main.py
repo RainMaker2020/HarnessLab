@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""HarnessLab Orchestrator — lightweight entry point for the AI coding task lifecycle.
+"""HarnessingLab Orchestrator v1.5 — Test-first contract negotiation + task lifecycle.
 
-Pipeline: PLAN.md → PromptGenerator → Worker (claude CLI) → BaseEvaluator → git commit/rollback.
-All sub-concerns live in their own modules:
-  ui.py           — ObservationDeck (all terminal output)
-  model_router.py — ModelRouter (dynamic model selection from harness.yaml)
-  sandbox.py — DockerManager (sandbox container lifecycle)
-  evaluator.py    — BaseEvaluator + concrete implementations
-  prompt_generator.py — PromptGenerator (prompt assembly)
+Pipeline (test_first): NEGOTIATE (ContractPlanner → ContractVerifier) → lock contract in git
+→ GENERATE prompt → EXECUTE (Worker) → EVALUATE → commit/rollback.
+
+Sub-modules: ui, model_router, sandbox, planner, evaluator, prompt_generator.
 """
 
 import json
@@ -19,10 +16,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from evaluator import BaseEvaluator, ExitCodeEvaluator, PlaywrightVisualEvaluator
+from evaluator import (
+    BaseEvaluator,
+    ContractVerifier,
+    ExitCodeEvaluator,
+    PlaywrightVisualEvaluator,
+)
 from exceptions import HarnessError
 from harness_config import HarnessConfig
 from model_router import ModelRouter
+from planner import ContractPlanner
 from prompt_generator import PromptGenerator
 from sandbox import DockerManager
 from trajectory_logger import TrajectoryLogger
@@ -149,6 +152,13 @@ class GitManager:
         self._run("git", "add", ".")
         self._run("git", "commit", "-m", message)
 
+    def commit_selected(self, paths: list[Path], message: str) -> None:
+        """Stage only the given paths (relative to workspace) and commit."""
+        for p in paths:
+            rel = p.resolve().relative_to(self.workspace_dir.resolve())
+            self._run("git", "add", str(rel))
+        self._run("git", "commit", "-m", message)
+
     def rollback(self) -> None:
         """Discard all uncommitted changes: reset tracked + clean untracked."""
         self._run("git", "reset", "--hard")
@@ -254,6 +264,12 @@ class Orchestrator:
         self.evaluator = evaluator
         self.parser = PlanParser(config.plan_file)
         model_router = ModelRouter(config)
+        self.contract_planner: Optional[ContractPlanner] = (
+            ContractPlanner(config, model_router) if config.test_first else None
+        )
+        self.contract_verifier: Optional[ContractVerifier] = (
+            ContractVerifier(config) if config.test_first else None
+        )
         self._docker_manager = DockerManager(config, ui) if config.worker_mode == "docker" else None
         self.worker = Worker(config, model_router, self._docker_manager)
 
@@ -276,8 +292,44 @@ class Orchestrator:
             if self._docker_manager is not None:
                 self._docker_manager.stop()
 
+    def _negotiate_contract(self, task: Task) -> Path:
+        """NEGOTIATE: generate contract tests, verify vs SPEC, lock in git. Retries then human pause."""
+        assert self.contract_planner is not None and self.contract_verifier is not None
+        max_n = self.config.contract_negotiation_max_retries
+        path: Optional[Path] = None
+        for n in range(1, max_n + 1):
+            self.ui.contract_round(n, max_n, task.task_id)
+            path = self.contract_planner.generate_contract(task.task_id, task.description)
+            vr = self.contract_verifier.verify_contract(task.task_id, task.description, path)
+            if vr.passed:
+                self.ui.contract_approved(task.task_id)
+                self.git.commit_selected([path], f"chore: lock contract for {task.task_id}")
+                return path
+            self.ui.contract_rejected(task.task_id, vr.output)
+
+        self.ui.contract_human_pause(task.task_id)
+        input()
+        path = self.contract_planner.contract_path(task.task_id)
+        if not path.exists():
+            raise HarnessError(
+                f"Expected contract file after human pause: {path}. "
+                "Create or restore the contract test file and retry."
+            )
+        vr = self.contract_verifier.verify_contract(task.task_id, task.description, path)
+        if not vr.passed:
+            raise HarnessError(
+                f"Contract verification failed after human pause.\n{vr.output}"
+            )
+        self.ui.contract_approved(task.task_id)
+        self.git.commit_selected([path], f"chore: lock contract for {task.task_id}")
+        return path
+
     def _run_task(self, task: Task) -> None:
         """Attempt a task up to max_retries times with rollback on failure."""
+        contract_path: Optional[Path] = None
+        if self.config.test_first:
+            contract_path = self._negotiate_contract(task)
+
         for attempt in range(1, self.config.max_retries + 1):
             self.ui.attempt_start(attempt, self.config.max_retries)
 
@@ -292,6 +344,7 @@ class Orchestrator:
                 task_description=task.description,
                 attempt=attempt,
                 last_failure=last_failure,
+                contract_path=contract_path,
             )
             self.ui.prompt_written(prompt_file.name)
 

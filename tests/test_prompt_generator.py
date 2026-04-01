@@ -82,6 +82,24 @@ def test_generate_injects_last_failure_on_retry(tmp_harness):
     assert "Error: bad code" in content
 
 
+def test_generate_includes_contract_when_path_provided(tmp_harness):
+    _, config = tmp_harness
+    gen = PromptGenerator(config)
+    contract = config.workspace_dir / "TASK_01.contract.test.ts"
+    contract.write_text("expect(true).toBe(true);")
+    gen.generate(
+        "TASK_01",
+        "Create hello_world.py",
+        attempt=1,
+        last_failure=None,
+        contract_path=contract,
+    )
+    content = (config.workspace_dir / ".harness_prompt.md").read_text()
+    assert "The CONTRACT" in content
+    assert "NOT allowed to modify" in content
+    assert "expect(true)" in content
+
+
 def test_generate_no_retry_section_on_first_attempt(tmp_harness):
     _, config = tmp_harness
     gen = PromptGenerator(config)

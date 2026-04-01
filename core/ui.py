@@ -18,7 +18,9 @@ class ObservationDeck:
 
     def harness_started(self) -> None:
         """Print the startup banner."""
-        self._console.print("[bold]HarnessLab Orchestrator started.[/bold]")
+        self._console.print(
+            "[bold]HarnessingLab Orchestrator v1.5 — Test-First Contract Negotiation[/bold]"
+        )
 
     def task_start(self, task_id: str, description: str) -> None:
         """Print the task header divider."""
@@ -121,3 +123,25 @@ class ObservationDeck:
     def override_resumed(self) -> None:
         """Print that the override session ended and evaluation is re-running."""
         self._console.print("[dim]  Override complete — re-evaluating workspace...[/dim]")
+
+    def contract_round(self, round_num: int, max_rounds: int, task_id: str) -> None:
+        """Print NEGOTIATE phase: contract generation round."""
+        self._console.print(
+            f"[magenta]  NEGOTIATE: contract round {round_num}/{max_rounds} ({task_id})[/magenta]"
+        )
+
+    def contract_approved(self, task_id: str) -> None:
+        """Contract verifier approved; contract will be locked in git."""
+        self._console.print(f"[green]  ✓ Contract APPROVED for {task_id} — locked in git.[/green]")
+
+    def contract_rejected(self, task_id: str, reason: str) -> None:
+        """Contract verifier rejected; planner will retry or pause."""
+        snippet = (reason[:500] + "…") if len(reason) > 500 else reason
+        self._console.print(f"[yellow]  Contract REJECTED for {task_id}:[/yellow]\n[dim]{snippet}[/dim]")
+
+    def contract_human_pause(self, task_id: str) -> None:
+        """Planner retries exhausted — wait for human to fix SPEC or contract file."""
+        self._console.print(
+            f"\n[bold red]Contract negotiation exhausted for {task_id}.[/bold red]\n"
+            "Edit SPEC.md or the contract test file, then press Enter to re-verify."
+        )

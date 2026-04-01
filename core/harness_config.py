@@ -60,6 +60,8 @@ class OrchestrationConfig:
     interactive_mode: bool
     auto_rollback: bool
     distillation_mode: bool
+    test_first: bool
+    contract_negotiation_max_retries: int
 
 
 @dataclass
@@ -159,6 +161,14 @@ class HarnessConfig:
     def docker_network_access(self) -> bool:
         return self.runtime.network_access
 
+    @property
+    def test_first(self) -> bool:
+        return self.orchestration.test_first
+
+    @property
+    def contract_negotiation_max_retries(self) -> int:
+        return self.orchestration.contract_negotiation_max_retries
+
     @classmethod
     def from_yaml(cls, path: Path) -> "HarnessConfig":
         """Parse harness.yaml. Nested keys override flat legacy keys."""
@@ -242,6 +252,8 @@ class HarnessConfig:
             interactive_mode=bool(merged.get("interactive_mode", False)),
             auto_rollback=bool(merged.get("auto_rollback", True)),
             distillation_mode=bool(merged.get("distillation_mode", False)),
+            test_first=bool(merged.get("test_first", False)),
+            contract_negotiation_max_retries=int(merged.get("contract_negotiation_max_retries") or 3),
         )
 
         return cls(
@@ -288,6 +300,10 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
         out["auto_rollback"] = raw["auto_rollback"]
     if raw.get("distillation_mode") is not None:
         out["distillation_mode"] = raw["distillation_mode"]
+    if raw.get("test_first") is not None:
+        out["test_first"] = raw["test_first"]
+    if raw.get("contract_negotiation_max_retries") is not None:
+        out["contract_negotiation_max_retries"] = raw["contract_negotiation_max_retries"]
 
     proj = raw.get("project") or {}
     if isinstance(proj, dict):
@@ -350,6 +366,10 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
             out["auto_rollback"] = orch["auto_rollback"]
         if orch.get("distillation_mode") is not None:
             out["distillation_mode"] = orch["distillation_mode"]
+        if orch.get("test_first") is not None:
+            out["test_first"] = orch["test_first"]
+        if orch.get("contract_negotiation_max_retries") is not None:
+            out["contract_negotiation_max_retries"] = orch["contract_negotiation_max_retries"]
 
     # evaluator strategy: nested evaluation.strategy > flat evaluator
     if out.get("eval_strategy") is not None:
