@@ -162,7 +162,12 @@ class PromptGenerator:
                 "",
             ]
 
-        wisdom_block: list[str] = format_wisdom_block(wisdom_lessons or [])
+        ablation = getattr(self.config, "ablation", None)
+        disable_wisdom = ablation is not None and getattr(ablation, "disable_wisdom_rag", False)
+        disable_contract = ablation is not None and getattr(ablation, "disable_contract_negotiation", False)
+
+        effective_wisdom = [] if disable_wisdom else (wisdom_lessons or [])
+        wisdom_block: list[str] = format_wisdom_block(effective_wisdom)
 
         sections = [
             "# HarnessingLab v1.5 — Autonomous Task Prompt",
@@ -196,7 +201,7 @@ class PromptGenerator:
             "Do not modify files outside the scope of this task.",
         ]
 
-        if contract_path is not None and contract_path.exists():
+        if not disable_contract and contract_path is not None and contract_path.exists():
             contract_body = contract_path.read_text(encoding="utf-8")
             sections += [
                 "",

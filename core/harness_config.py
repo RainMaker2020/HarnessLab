@@ -20,6 +20,15 @@ def _resolve(base: Path, value: str | Path | None) -> Optional[Path]:
 
 
 @dataclass
+class AblationConfig:
+    """Flags to disable individual harness components for ablation studies."""
+    disable_wisdom_rag: bool = False
+    disable_contract_negotiation: bool = False
+    single_model_mode: bool = False
+    disable_playwright: bool = False
+
+
+@dataclass
 class ProjectConfig:
     name: str
     version: str
@@ -84,6 +93,11 @@ class HarnessConfig:
     runtime: RuntimeConfig
     evaluation: EvaluationConfig
     orchestration: OrchestrationConfig
+    ablation: AblationConfig = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.ablation is None:
+            self.ablation = AblationConfig()
 
     # --- Backward-compatible properties (flat API) ---
 
@@ -121,6 +135,10 @@ class HarnessConfig:
 
     @property
     def evaluator_type(self) -> str:
+        if self.ablation.disable_playwright:
+            strategy = self.evaluation.strategy or "exit_code"
+            if _strategy_to_evaluator_type(strategy) not in ("exit_code",):
+                return "exit_code"
         return _strategy_to_evaluator_type(self.evaluation.strategy)
 
     @property
@@ -181,7 +199,15 @@ class HarnessConfig:
 
     @property
     def test_first(self) -> bool:
-        return self.orchestration.test_first
+        return self.orchestration.test_first and not self.ablation.disable_contract_negotiation
+
+    @property
+    def effective_models(self) -> dict[str, str]:
+        """Returns models dict; flattens all roles to generator when single_model_mode is active."""
+        if self.ablation.single_model_mode:
+            generator = self.models.get("generator", "claude-sonnet-4-6")
+            return {role: generator for role in self.models}
+        return dict(self.models)
 
     @property
     def contract_negotiation_max_retries(self) -> int:
@@ -213,7 +239,7 @@ class HarnessConfig:
 
     @property
     def wisdom_rag_enabled(self) -> bool:
-        return self.orchestration.wisdom_rag
+        return self.orchestration.wisdom_rag and not self.ablation.disable_wisdom_rag
 
     @property
     def resolved_wisdom_store(self) -> Path:
@@ -261,6 +287,7 @@ class HarnessConfig:
             runtime=parent.runtime,
             evaluation=parent.evaluation,
             orchestration=orch,
+            ablation=parent.ablation,
         )
 
     @classmethod
@@ -371,6 +398,14 @@ class HarnessConfig:
             wisdom_rag=bool(merged.get("wisdom_rag", False)),
         )
 
+        ablation_raw = merged.get("ablation") or {}
+        ablation = AblationConfig(
+            disable_wisdom_rag=bool(ablation_raw.get("disable_wisdom_rag", False)),
+            disable_contract_negotiation=bool(ablation_raw.get("disable_contract_negotiation", False)),
+            single_model_mode=bool(ablation_raw.get("single_model_mode", False)),
+            disable_playwright=bool(ablation_raw.get("disable_playwright", False)),
+        )
+
         cfg = cls(
             project=project,
             paths=paths,
@@ -378,6 +413,7 @@ class HarnessConfig:
             runtime=runtime,
             evaluation=evaluation,
             orchestration=orchestration,
+            ablation=ablation,
         )
         if cfg.orchestration_mode == "recursive" and cfg.orchestration.epic_file is None:
             raise HarnessError(
@@ -533,6 +569,10 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
     # evaluator strategy: nested evaluation.strategy > flat evaluator
     if out.get("eval_strategy") is not None:
         out["evaluator_flat"] = out["eval_strategy"]
+
+    ablation = raw.get("ablation") or {}
+    if isinstance(ablation, dict) and ablation:
+        out["ablation"] = ablation
 
     return out
 

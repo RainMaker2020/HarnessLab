@@ -82,3 +82,13 @@ orchestration:
   wisdom_rag: true
   test_first: true
   contract_negotiation_max_retries: 3
+
+# ------------------------------------------
+# THE SCIENTIST: Ablation Study Controls
+# Set any flag to true to disable that component for comparative runs.
+# ------------------------------------------
+ablation:
+  disable_wisdom_rag: false
+  disable_contract_negotiation: false
+  single_model_mode: false
+  disable_playwright: false
