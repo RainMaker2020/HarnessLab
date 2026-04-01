@@ -7,6 +7,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from env_bootstrap import load_harness_env
 from exceptions import HarnessError
 from harness_config import HarnessConfig
 from model_router import ModelRouter
@@ -40,6 +41,7 @@ __all__ = [
 
 def main() -> None:
     """Load harness.yaml and run linear or recursive orchestration."""
+    load_harness_env()
     config_path = Path(__file__).parent.parent / "harness.yaml"
     ui = ObservationDeck()
 

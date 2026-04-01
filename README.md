@@ -58,7 +58,7 @@ HarnessLab/
 - **Git**
 - **Docker** (optional but recommended for sandboxed workers and the provided image)
 - **Claude Code CLI**: `npm install -g @anthropic-ai/claude-code`
-- **Anthropic API key**: `export ANTHROPIC_API_KEY=...` (used by contract verification and vision paths)
+- **API keys for the Brain** (vision + contract verifier): copy [`.env.example`](.env.example) to `.env` in the repo root and set `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY`, or export them in the shell (`export ANTHROPIC_API_KEY=...`). The harness loads `.env` on startup when you run `main.py`.
 - For **Playwright** visual evaluation: after `pip install`, run `playwright install chromium` on the host (the sandbox Dockerfile installs Chromium for container runs)
 
 ### Setup

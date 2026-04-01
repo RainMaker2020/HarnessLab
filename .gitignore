@@ -1,3 +1,4 @@
+.env
 workspace/
 # Harness project bundle (generated app + local state; specs may be committed if you choose)
 project/workspace/
