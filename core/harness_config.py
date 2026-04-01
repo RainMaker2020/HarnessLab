@@ -36,6 +36,7 @@ class PathsConfig:
     distillation_export: Optional[Path]
     prompt_buffer: Optional[Path]
     screenshot_target: Optional[Path]
+    global_interface_doc: Optional[Path]
 
 
 @dataclass
@@ -56,12 +57,14 @@ class EvaluationConfig:
 
 @dataclass
 class OrchestrationConfig:
+    mode: str
     max_retries_per_task: int
     interactive_mode: bool
     auto_rollback: bool
     distillation_mode: bool
     test_first: bool
     contract_negotiation_max_retries: int
+    epic_file: Optional[Path]
 
 
 @dataclass
@@ -169,6 +172,54 @@ class HarnessConfig:
     def contract_negotiation_max_retries(self) -> int:
         return self.orchestration.contract_negotiation_max_retries
 
+    @property
+    def orchestration_mode(self) -> str:
+        return (self.orchestration.mode or "linear").strip().lower()
+
+    @property
+    def epic_path(self) -> Optional[Path]:
+        return self.orchestration.epic_file
+
+    @property
+    def global_interface_doc(self) -> Optional[Path]:
+        return self.paths.global_interface_doc
+
+    @classmethod
+    def sub_workspace_config(cls, parent: "HarnessConfig", module_dir: Path) -> "HarnessConfig":
+        """Build a HarnessConfig for a module sub-workspace (isolated PLAN, history, spec)."""
+        module_dir = module_dir.resolve()
+        spec = module_dir / "MODULE_SPEC.md"
+        gi = module_dir / "GLOBAL_INTERFACE.md"
+        paths = PathsConfig(
+            workspace_dir=module_dir,
+            architecture_doc=parent.paths.architecture_doc,
+            spec_doc=spec,
+            plan_file=module_dir / "PLAN.md",
+            history_file=module_dir / "history.json",
+            distillation_export=None,
+            prompt_buffer=module_dir / ".harness_prompt.md",
+            screenshot_target=module_dir / ".harness_screenshot.png",
+            global_interface_doc=gi,
+        )
+        orch = OrchestrationConfig(
+            mode="linear",
+            max_retries_per_task=parent.orchestration.max_retries_per_task,
+            interactive_mode=parent.orchestration.interactive_mode,
+            auto_rollback=parent.orchestration.auto_rollback,
+            distillation_mode=False,
+            test_first=parent.orchestration.test_first,
+            contract_negotiation_max_retries=parent.orchestration.contract_negotiation_max_retries,
+            epic_file=None,
+        )
+        return cls(
+            project=parent.project,
+            paths=paths,
+            models=parent.models,
+            runtime=parent.runtime,
+            evaluation=parent.evaluation,
+            orchestration=orch,
+        )
+
     @classmethod
     def from_yaml(cls, path: Path) -> "HarnessConfig":
         """Parse harness.yaml. Nested keys override flat legacy keys."""
@@ -231,6 +282,7 @@ class HarnessConfig:
             distillation_export=_resolve(base, merged.get("distillation_export")),
             prompt_buffer=_resolve(base, merged.get("prompt_buffer")),
             screenshot_target=_resolve(base, merged.get("screenshot_target")),
+            global_interface_doc=_resolve(base, merged.get("global_interface_doc")),
         )
 
         runtime = RuntimeConfig(
@@ -247,16 +299,21 @@ class HarnessConfig:
             vision_rubric=vision_rubric,
         )
 
+        orch_mode = str(merged.get("orchestration_mode") or "linear").strip().lower()
+        epic_resolved = _resolve(base, merged.get("epic_file"))
+
         orchestration = OrchestrationConfig(
+            mode=orch_mode,
             max_retries_per_task=int(merged.get("max_retries") or 3),
             interactive_mode=bool(merged.get("interactive_mode", False)),
             auto_rollback=bool(merged.get("auto_rollback", True)),
             distillation_mode=bool(merged.get("distillation_mode", False)),
             test_first=bool(merged.get("test_first", False)),
             contract_negotiation_max_retries=int(merged.get("contract_negotiation_max_retries") or 3),
+            epic_file=epic_resolved,
         )
 
-        return cls(
+        cfg = cls(
             project=project,
             paths=paths,
             models=models,
@@ -264,6 +321,12 @@ class HarnessConfig:
             evaluation=evaluation,
             orchestration=orchestration,
         )
+        if cfg.orchestration_mode == "recursive" and cfg.orchestration.epic_file is None:
+            raise HarnessError(
+                "orchestration.mode is 'recursive' but 'epic_file' is missing. "
+                "Set paths.epic_file or orchestration.epic_file in harness.yaml."
+            )
+        return cfg
 
 
 def _strategy_to_evaluator_type(strategy: str) -> str:
@@ -296,6 +359,9 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
     out["distillation_export"] = raw.get("distillation_export")
     out["prompt_buffer"] = raw.get("prompt_buffer")
     out["screenshot_target"] = raw.get("screenshot_target")
+    out["epic_file"] = raw.get("epic_file")
+    out["orchestration_mode"] = raw.get("orchestration_mode")
+    out["global_interface_doc"] = raw.get("global_interface_doc")
     if raw.get("auto_rollback") is not None:
         out["auto_rollback"] = raw["auto_rollback"]
     if raw.get("distillation_mode") is not None:
@@ -313,6 +379,10 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
 
     paths = raw.get("paths") or {}
     if isinstance(paths, dict):
+        if paths.get("epic_file") is not None:
+            out["epic_file"] = paths["epic_file"]
+        if paths.get("global_interface_doc") is not None:
+            out["global_interface_doc"] = paths["global_interface_doc"]
         for key, yaml_key in (
             ("workspace_dir", "workspace_dir"),
             ("architecture_doc", "architecture_doc"),
@@ -358,6 +428,10 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
 
     orch = raw.get("orchestration") or {}
     if isinstance(orch, dict):
+        if orch.get("mode") is not None:
+            out["orchestration_mode"] = orch["mode"]
+        if orch.get("epic_file") is not None:
+            out["epic_file"] = orch["epic_file"]
         if orch.get("max_retries_per_task") is not None:
             out["max_retries"] = orch["max_retries_per_task"]
         if orch.get("interactive_mode") is not None:

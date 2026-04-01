@@ -27,6 +27,23 @@ class PromptGenerator:
         architecture = self.config.architecture_doc.read_text()
         spec = self.config.spec_doc.read_text()
 
+        global_interface_block: list[str] = []
+        gi_path = getattr(self.config, "global_interface_doc", None)
+        if gi_path is not None and Path(gi_path).exists():
+            gi_body = Path(gi_path).read_text(encoding="utf-8").strip()
+            if gi_body:
+                global_interface_block = [
+                    "",
+                    "---",
+                    "",
+                    "## Global Interface Contract (cross-module)",
+                    "",
+                    "Other modules will call into this area only through this contract. "
+                    "Implement code that satisfies these signatures and behaviors.",
+                    "",
+                    gi_body,
+                ]
+
         sections = [
             "# HarnessingLab v1.5 — Autonomous Task Prompt",
             f"**Generated:** {datetime.now(timezone.utc).isoformat()}",
@@ -43,6 +60,8 @@ class PromptGenerator:
             "## Project Specification",
             "",
             spec,
+            "",
+            *global_interface_block,
             "",
             "---",
             "",

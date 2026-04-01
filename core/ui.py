@@ -1,5 +1,7 @@
 """ObservationDeck — centralized CLI output for the HarnessLab pipeline."""
 
+from pathlib import Path
+
 from rich.console import Console
 
 
@@ -20,6 +22,31 @@ class ObservationDeck:
         """Print the startup banner."""
         self._console.print(
             "[bold]HarnessingLab Orchestrator v1.5 — Test-First Contract Negotiation[/bold]"
+        )
+
+    def master_epic_started(self, epic_path: Path) -> None:
+        """Print banner when running in recursive (Master) mode."""
+        self._console.print(
+            f"\n[bold magenta]HarnessingLab Master Orchestrator — EPIC mode[/bold magenta]\n"
+            f"[dim]EPIC file: {epic_path}[/dim]"
+        )
+
+    def epic_module_start(self, module_id: str, title: str) -> None:
+        """Print header before provisioning and running a module Sub-Orchestrator."""
+        self._console.print(
+            f"\n[bold magenta]═══ EPIC {module_id}: {title} (Sub-Orchestrator) ═══[/bold magenta]"
+        )
+
+    def epic_module_complete(self, module_id: str, title: str) -> None:
+        """Print when a module's PLAN is fully verified and EPIC line is checked off."""
+        self._console.print(
+            f"[bold green]  ✓ EPIC {module_id} ({title}) complete — marked in EPIC.md[/bold green]"
+        )
+
+    def epic_all_done(self) -> None:
+        """Print when every module in EPIC.md is checked off."""
+        self._console.print(
+            "\n[bold green]✓ Epic complete — all modules in EPIC.md are done.[/bold green]"
         )
 
     def task_start(self, task_id: str, description: str) -> None:
