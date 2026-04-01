@@ -1,5 +1,6 @@
 """Evaluator — abstract base and concrete implementations for task quality gating."""
 
+import asyncio
 import re
 import subprocess
 from abc import ABC, abstractmethod
@@ -13,6 +14,11 @@ try:
     from playwright.sync_api import sync_playwright
 except ImportError:  # pragma: no cover
     sync_playwright = None  # type: ignore[assignment]
+
+try:
+    from playwright.async_api import async_playwright
+except ImportError:  # pragma: no cover
+    async_playwright = None  # type: ignore[assignment]
 
 
 DEFAULT_VISION_RUBRIC = (
@@ -501,6 +507,167 @@ class ContractVerifier:
             return EvalResult(
                 passed=False,
                 output="Brain LLM returned no text content in the contract verification response.",
+                exit_code=1,
+            )
+        passed, amb = parse_trailing_verdict(response_text)
+        out = response_text
+        if amb is not None:
+            out = f"{response_text}\n---\n{amb}"
+            passed = False
+        return EvalResult(
+            passed=passed,
+            output=out,
+            exit_code=0 if passed else 1,
+        )
+
+
+_FUNCTIONAL_QA_PROMPT = (
+    "You are an adversarial QA engineer. Your job is to find functional regressions.\n\n"
+    "You will receive:\n"
+    "1. The task that was just implemented\n"
+    "2. The rendered HTML of the page\n"
+    "3. Any browser console errors captured during load\n"
+    "4. Any network request failures\n"
+    "5. (Optional) The contract test file for this task\n\n"
+    "Evaluate whether the implementation meets the task requirements with no regressions.\n"
+    "Be adversarial — look for broken interactions, missing elements, and error states.\n\n"
+    "End your response with exactly one line: APPROVE or REJECT."
+)
+
+
+class PlaywrightFunctionalEvaluator(BaseEvaluator):
+    """Responsibility: The 'Adversarial Tester' — functional QA gate using async Playwright.
+
+    Pipeline:
+      1. Launch headless Chromium via async Playwright, navigate to playwright_target.
+      2. Collect console errors and network failures during page load.
+      3. Capture page HTML.
+      4. Send HTML + errors + optional contract file to Brain LLM for APPROVE/REJECT.
+
+    Activate by setting evaluation.strategy to playwright_functional in harness.yaml.
+    """
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def run(self, edited_paths: Optional[list[str]] = None, task=None) -> EvalResult:
+        """Run async Playwright functional evaluation synchronously via asyncio.run()."""
+        try:
+            return asyncio.run(self._run_async(task))
+        except RuntimeError:
+            # Already inside an event loop (e.g. Jupyter) — use get_event_loop
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(self._run_async(task))
+            finally:
+                loop.close()
+
+    async def _run_async(self, task) -> EvalResult:
+        if async_playwright is None:
+            return EvalResult(
+                passed=False,
+                output="Playwright not installed. Run: pip install playwright && playwright install chromium",
+                exit_code=1,
+            )
+
+        target = self._resolve_target()
+        console_errors: list[str] = []
+        network_failures: list[str] = []
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+                page.on(
+                    "requestfailed",
+                    lambda req: network_failures.append(
+                        f"{req.method} {req.url} {req.failure or ''}"
+                    ),
+                )
+                try:
+                    await page.goto(str(target), wait_until="networkidle")
+                except Exception as exc:  # noqa: BLE001
+                    return EvalResult(
+                        passed=False,
+                        output=f"Playwright page load failed: {exc}",
+                        exit_code=1,
+                    )
+                html = await page.content()
+            finally:
+                await browser.close()
+
+        return self._llm_qa(
+            html=html,
+            console_errors=console_errors,
+            network_failures=network_failures,
+            task=task,
+        )
+
+    def _resolve_target(self) -> Union[Path, str]:
+        t = getattr(self.config, "playwright_target", "index.html")
+        if isinstance(t, str) and (t.startswith("http://") or t.startswith("https://")):
+            return t
+        p = Path(t)
+        if p.is_absolute():
+            return p
+        return self.config.workspace_dir / t
+
+    def _llm_qa(
+        self,
+        *,
+        html: str,
+        console_errors: list[str],
+        network_failures: list[str],
+        task,
+    ) -> EvalResult:
+        try:
+            client = brain_client_for_role(getattr(self.config, "models", None), "evaluator")
+        except (ValueError, RuntimeError) as exc:
+            return EvalResult(passed=False, output=str(exc), exit_code=1)
+
+        models = getattr(self.config, "models", {}) or {}
+        model = models.get("evaluator", "claude-3-5-sonnet-20241022")
+
+        task_id = getattr(task, "task_id", "") if task else ""
+        task_description = getattr(task, "description", "") if task else ""
+
+        # Load contract file if present
+        contract_section = ""
+        if task_id:
+            contract_path = self.config.workspace_dir / f"{task_id}.contract.test.ts"
+            if contract_path.exists():
+                try:
+                    contract_text = contract_path.read_text(encoding="utf-8")
+                    contract_section = f"\n\n## Contract test file\n```typescript\n{contract_text}\n```"
+                except OSError:
+                    pass
+
+        console_section = (
+            "\n".join(console_errors) if console_errors else "_none_"
+        )
+        network_section = (
+            "\n".join(network_failures) if network_failures else "_none_"
+        )
+
+        user_block = (
+            f"{_FUNCTIONAL_QA_PROMPT}\n\n"
+            f"## Task\n{task_id}: {task_description}\n\n"
+            f"## Page HTML\n```html\n{html[:8000]}\n```\n\n"
+            f"## Console errors\n{console_section}\n\n"
+            f"## Network failures\n{network_section}"
+            f"{contract_section}"
+        )
+
+        try:
+            response_text = client.complete_text(model, user_block, max_tokens=2048)
+        except Exception as exc:  # noqa: BLE001
+            return _eval_result_from_llm_exception(exc)
+
+        if not response_text.strip():
+            return EvalResult(
+                passed=False,
+                output="Brain LLM returned no text content in the functional QA response.",
                 exit_code=1,
             )
         passed, amb = parse_trailing_verdict(response_text)

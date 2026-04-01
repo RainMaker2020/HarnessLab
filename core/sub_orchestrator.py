@@ -22,6 +22,7 @@ from evaluator import (
     ContractVerifier,
     EvalResult,
     ExitCodeEvaluator,
+    PlaywrightFunctionalEvaluator,
     PlaywrightVisualEvaluator,
 )
 from exceptions import HarnessError
@@ -631,6 +632,7 @@ def build_evaluator(config: HarnessConfig) -> BaseEvaluator:
     evaluator_map = {
         "exit_code": ExitCodeEvaluator,
         "playwright": PlaywrightVisualEvaluator,
+        "playwright_functional": PlaywrightFunctionalEvaluator,
     }
     cls = evaluator_map.get(config.evaluator_type)
     if cls is None:
