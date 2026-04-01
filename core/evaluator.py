@@ -7,13 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
 
-# Optional dependencies — imported at module level so tests can patch them via
-# `patch("evaluator.anthropic.Anthropic")` and `patch("evaluator.sync_playwright")`.
-# Set to None when not installed; concrete evaluators check before use.
-try:
-    import anthropic
-except ImportError:  # pragma: no cover
-    anthropic = None  # type: ignore[assignment]
+from llm_provider import brain_client_for_role
 
 try:
     from playwright.sync_api import sync_playwright
@@ -87,24 +81,17 @@ def parse_trailing_verdict(text: str) -> tuple[bool, Optional[str]]:
     )
 
 
-def anthropic_response_text(message: object) -> str:
-    """Safely extract text from an Anthropic Messages API response."""
-    blocks = getattr(message, "content", None)
-    if not blocks:
-        return ""
-    for block in blocks:
-        if getattr(block, "type", None) == "text":
-            t = getattr(block, "text", None)
-            if t is not None:
-                return str(t)
-    try:
-        first = blocks[0]
-        t = getattr(first, "text", None)
-        if t is not None:
-            return str(t)
-    except (IndexError, TypeError, AttributeError):
-        pass
-    return ""
+def _eval_result_from_llm_exception(exc: BaseException) -> EvalResult:
+    """Map SDK errors from Brain LLM calls to an EvalResult."""
+    name = type(exc).__name__
+    msg = str(exc)
+    if name == "AuthenticationError":
+        return EvalResult(
+            passed=False,
+            output=f"LLM authentication failed. Check API keys / base URL: {msg}",
+            exit_code=1,
+        )
+    return EvalResult(passed=False, output=f"{name}: {msg}", exit_code=1)
 
 
 _RE_FILE_IN_ERR = re.compile(
@@ -284,13 +271,13 @@ class ExitCodeEvaluator(BaseEvaluator):
 
 
 class PlaywrightVisualEvaluator(BaseEvaluator):
-    """Responsibility: The 'Eye' — visual quality gate using Playwright and Claude Vision.
+    """Responsibility: The 'Eye' — visual quality gate using Playwright and a Brain LLM (vision).
 
     Pipeline:
       1. Run build_command. Fail fast if it exits non-zero.
       2. Launch headless Chromium via Playwright, navigate to playwright_target
          (a static HTML file relative to workspace/), take a full-page screenshot.
-      3. Send the screenshot to Claude Vision (vision_model from harness.yaml).
+      3. Send the screenshot to the configured Brain model (evaluator / evaluator_provider).
       4. Ask: "Does this UI follow design principles? Score 1-10. If < 8, output REJECT."
       5. Pass if the response does not contain "REJECT"; fail otherwise.
 
@@ -412,72 +399,45 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
             return EvalResult(passed=False, output=f"Playwright error: {exc}", exit_code=1)
 
     def _evaluate_with_vision(self, screenshot_path: Path) -> EvalResult:
-        """Send the screenshot to Claude Vision and parse the APPROVE/REJECT verdict."""
-        if anthropic is None:
-            return EvalResult(
-                passed=False,
-                output="anthropic package not installed. Run: pip install anthropic",
-                exit_code=1,
-            )
+        """Send the screenshot to the configured Brain LLM and parse APPROVE/REJECT."""
         try:
-            import base64
+            client = brain_client_for_role(getattr(self.config, "models", None), "evaluator")
+        except (ValueError, RuntimeError) as exc:
+            return EvalResult(passed=False, output=str(exc), exit_code=1)
 
-            with open(screenshot_path, "rb") as f:
-                image_data = base64.standard_b64encode(f.read()).decode("utf-8")
+        models = getattr(self.config, "models", {}) or {}
+        vision_model = models.get("evaluator", "claude-3-5-sonnet-20241022")
+        try:
+            png_bytes = screenshot_path.read_bytes()
+        except OSError as exc:
+            return EvalResult(passed=False, output=f"Could not read screenshot file: {exc}", exit_code=1)
 
-            models = getattr(self.config, "models", {}) or {}
-            vision_model = models.get("evaluator", "claude-3-5-sonnet-20241022")
-            client = anthropic.Anthropic()
-            message = client.messages.create(
-                model=vision_model,
+        try:
+            response_text = client.complete_text_with_vision_png(
+                vision_model,
+                png_bytes=png_bytes,
+                text_prompt=self._vision_prompt_text(),
                 max_tokens=1024,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "image/png",
-                                    "data": image_data,
-                                },
-                            },
-                            {"type": "text", "text": self._vision_prompt_text()},
-                        ],
-                    }
-                ],
             )
+        except Exception as exc:  # noqa: BLE001 — Brain SDKs raise varied types
+            return _eval_result_from_llm_exception(exc)
 
-            response_text = anthropic_response_text(message)
-            if not response_text.strip():
-                return EvalResult(
-                    passed=False,
-                    output="Anthropic returned no text content in the vision response.",
-                    exit_code=1,
-                )
-            passed, amb = parse_trailing_verdict(response_text)
-            out = response_text
-            if amb is not None:
-                out = f"{response_text}\n---\n{amb}"
-                passed = False
-            return EvalResult(
-                passed=passed,
-                output=out,
-                exit_code=0 if passed else 1,
-            )
-        except anthropic.AuthenticationError as exc:
+        if not response_text.strip():
             return EvalResult(
                 passed=False,
-                output=f"Anthropic authentication failed. Check ANTHROPIC_API_KEY: {exc}",
+                output="Brain LLM returned no text content in the vision response.",
                 exit_code=1,
             )
-        except anthropic.APIError as exc:
-            return EvalResult(passed=False, output=f"Anthropic API error: {exc}", exit_code=1)
-        except (OSError, AttributeError, TypeError, IndexError) as exc:
-            return EvalResult(
-                passed=False, output=f"Could not read screenshot file or parse response: {exc}", exit_code=1
-            )
+        passed, amb = parse_trailing_verdict(response_text)
+        out = response_text
+        if amb is not None:
+            out = f"{response_text}\n---\n{amb}"
+            passed = False
+        return EvalResult(
+            passed=passed,
+            output=out,
+            exit_code=0 if passed else 1,
+        )
 
 
 CONTRACT_VERIFY_PROMPT = (
@@ -492,7 +452,7 @@ CONTRACT_VERIFY_PROMPT = (
 
 
 class ContractVerifier:
-    """NEGOTIATE-phase gate: Sonnet verifies contract tests against SPEC (Anthropic Messages API)."""
+    """NEGOTIATE-phase gate: Brain LLM verifies contract tests against SPEC (API, provider from config)."""
 
     def __init__(self, config) -> None:
         self.config = config
@@ -501,20 +461,22 @@ class ContractVerifier:
         self, task_id: str, task_description: str, contract_path: Path
     ) -> EvalResult:
         """Return passed=True if the contract is an acceptable 1:1 map to SPEC for this task."""
-        if anthropic is None:
-            return EvalResult(
-                passed=False,
-                output="anthropic package not installed. Run: pip install anthropic",
-                exit_code=1,
-            )
+        try:
+            client = brain_client_for_role(getattr(self.config, "models", None), "contract_verifier")
+        except (ValueError, RuntimeError) as exc:
+            return EvalResult(passed=False, output=str(exc), exit_code=1)
+
         if not contract_path.exists():
             return EvalResult(
                 passed=False,
                 output=f"Contract file not found: {contract_path}",
                 exit_code=1,
             )
-        spec_text = self.config.spec_doc.read_text()
-        contract_text = contract_path.read_text(encoding="utf-8")
+        try:
+            spec_text = self.config.spec_doc.read_text()
+            contract_text = contract_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return EvalResult(passed=False, output=f"Could not read files: {exc}", exit_code=1)
         models = getattr(self.config, "models", {}) or {}
         model = models.get("contract_verifier") or models.get("evaluator") or "claude-3-5-sonnet-20241022"
 
@@ -529,36 +491,23 @@ class ContractVerifier:
         )
 
         try:
-            client = anthropic.Anthropic()
-            message = client.messages.create(
-                model=model,
-                max_tokens=2048,
-                messages=[{"role": "user", "content": user_block}],
-            )
-            response_text = anthropic_response_text(message)
-            if not response_text.strip():
-                return EvalResult(
-                    passed=False,
-                    output="Anthropic returned no text content in the contract verification response.",
-                    exit_code=1,
-                )
-            passed, amb = parse_trailing_verdict(response_text)
-            out = response_text
-            if amb is not None:
-                out = f"{response_text}\n---\n{amb}"
-                passed = False
-            return EvalResult(
-                passed=passed,
-                output=out,
-                exit_code=0 if passed else 1,
-            )
-        except anthropic.AuthenticationError as exc:
+            response_text = client.complete_text(model, user_block, max_tokens=2048)
+        except Exception as exc:  # noqa: BLE001
+            return _eval_result_from_llm_exception(exc)
+
+        if not response_text.strip():
             return EvalResult(
                 passed=False,
-                output=f"Anthropic authentication failed. Check ANTHROPIC_API_KEY: {exc}",
+                output="Brain LLM returned no text content in the contract verification response.",
                 exit_code=1,
             )
-        except anthropic.APIError as exc:
-            return EvalResult(passed=False, output=f"Anthropic API error: {exc}", exit_code=1)
-        except (OSError, AttributeError, TypeError, IndexError) as exc:
-            return EvalResult(passed=False, output=f"Could not read files or parse response: {exc}", exit_code=1)
+        passed, amb = parse_trailing_verdict(response_text)
+        out = response_text
+        if amb is not None:
+            out = f"{response_text}\n---\n{amb}"
+            passed = False
+        return EvalResult(
+            passed=passed,
+            output=out,
+            exit_code=0 if passed else 1,
+        )

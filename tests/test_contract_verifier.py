@@ -24,15 +24,14 @@ def test_verify_contract_passes_on_final_line_approve(tmp_path):
     ct = tmp_path / "TASK_01.contract.test.ts"
     ct.write_text("test('x', () => {})")
 
-    msg = MagicMock()
-    msg.content = [MagicMock(type="text", text="Looks good.\nAPPROVE")]
     mock_client = MagicMock()
-    mock_client.messages.create.return_value = msg
+    mock_client.complete_text.return_value = "Looks good.\nAPPROVE"
 
-    with patch("evaluator.anthropic.Anthropic", return_value=mock_client):
+    with patch("evaluator.brain_client_for_role", return_value=mock_client):
         result = ContractVerifier(cfg).verify_contract("TASK_01", "Do X", ct)
 
     assert result.passed is True
+    mock_client.complete_text.assert_called_once()
 
 
 def test_verify_contract_fails_on_final_line_reject(tmp_path):
@@ -43,12 +42,10 @@ def test_verify_contract_fails_on_final_line_reject(tmp_path):
     ct = tmp_path / "TASK_01.contract.test.ts"
     ct.write_text("test('x', () => {})")
 
-    msg = MagicMock()
-    msg.content = [MagicMock(type="text", text="Gaps found.\nREJECT")]
     mock_client = MagicMock()
-    mock_client.messages.create.return_value = msg
+    mock_client.complete_text.return_value = "Gaps found.\nREJECT"
 
-    with patch("evaluator.anthropic.Anthropic", return_value=mock_client):
+    with patch("evaluator.brain_client_for_role", return_value=mock_client):
         result = ContractVerifier(cfg).verify_contract("TASK_01", "Do X", ct)
 
     assert result.passed is False
@@ -63,17 +60,12 @@ def test_verify_contract_no_substring_reject_false_positive(tmp_path):
     ct = tmp_path / "TASK_01.contract.test.ts"
     ct.write_text("test('x', () => {})")
 
-    msg = MagicMock()
-    msg.content = [
-        MagicMock(
-            type="text",
-            text="Earlier I considered REJECT but changed my mind.\nAPPROVE",
-        )
-    ]
     mock_client = MagicMock()
-    mock_client.messages.create.return_value = msg
+    mock_client.complete_text.return_value = (
+        "Earlier I considered REJECT but changed my mind.\nAPPROVE"
+    )
 
-    with patch("evaluator.anthropic.Anthropic", return_value=mock_client):
+    with patch("evaluator.brain_client_for_role", return_value=mock_client):
         result = ContractVerifier(cfg).verify_contract("TASK_01", "Do X", ct)
 
     assert result.passed is True

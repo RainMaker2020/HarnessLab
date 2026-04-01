@@ -1,5 +1,23 @@
 """ModelRouter — resolves the AI model for each pipeline role."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass(frozen=True)
+class ModelRoleResolution:
+    """Model id plus Brain (API) provider metadata for a harness role."""
+
+    model: str
+    provider: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+# Roles that use HTTP APIs in the Brain (not the Claude CLI worker).
+_BRAIN_API_ROLES = frozenset({"evaluator", "contract_verifier"})
+
 
 class ModelRouter:
     """Responsibility: Resolves the correct model for each harness role.
@@ -29,6 +47,23 @@ class ModelRouter:
         """
         models = getattr(self.config, "models", {}) or {}
         return models.get(role) or self.DEFAULTS.get(role, "claude-sonnet-4-6")
+
+    def resolve(self, role: str) -> ModelRoleResolution:
+        """Return model name and Brain provider settings for the orchestrator.
+
+        For ``evaluator`` and ``contract_verifier``, reads optional
+        ``{role}_provider`` (default ``anthropic``) and ``{role}_base_url``.
+        Planner and generator return ``provider=None`` (Claude CLI only).
+        """
+        models = getattr(self.config, "models", {}) or {}
+        model = models.get(role) or self.DEFAULTS.get(role, "claude-sonnet-4-6")
+        if role not in _BRAIN_API_ROLES:
+            return ModelRoleResolution(model=model, provider=None, base_url=None)
+        prov = models.get(f"{role}_provider")
+        provider = (str(prov).strip().lower() if prov else "anthropic") or "anthropic"
+        raw_url = models.get(f"{role}_base_url")
+        base_url = str(raw_url).strip() if raw_url else None
+        return ModelRoleResolution(model=model, provider=provider, base_url=base_url)
 
     def get_model_args(self, role: str = "generator") -> list:
         """Return CLI args to specify the model for the given role.

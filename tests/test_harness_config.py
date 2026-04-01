@@ -95,6 +95,37 @@ def test_multimodal_maps_to_playwright_evaluator_type(tmp_path: Path) -> None:
     assert c.evaluator_type == "playwright"
 
 
+def test_models_section_includes_brain_provider_keys(tmp_path: Path) -> None:
+    """Optional evaluator_provider / base_url are stored on config.models (strings)."""
+    _write_docs(tmp_path)
+    y = tmp_path / "harness.yaml"
+    y.write_text(
+        textwrap.dedent(
+            """
+        build_command: "echo ok"
+        models:
+          evaluator: "gpt-4o"
+          evaluator_provider: "openai"
+          contract_verifier: "deepseek-reasoner"
+          contract_verifier_provider: "openai-compatible"
+          contract_verifier_base_url: "https://api.deepseek.com"
+        paths:
+          workspace_dir: ./workspace
+          architecture_doc: ./ARCHITECTURE.md
+          specification_doc: ./SPEC.md
+          plan_file: ./workspace/PLAN.md
+          history_log: ./docs/history.json
+        evaluation:
+          strategy: exit_code
+    """
+        ).strip()
+    )
+    c = HarnessConfig.from_yaml(y)
+    assert c.models["evaluator"] == "gpt-4o"
+    assert c.models["evaluator_provider"] == "openai"
+    assert c.models["contract_verifier_base_url"] == "https://api.deepseek.com"
+
+
 def test_paths_section_aliases(tmp_path: Path) -> None:
     _write_docs(tmp_path)
     y = tmp_path / "harness.yaml"

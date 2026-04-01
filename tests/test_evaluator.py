@@ -178,16 +178,15 @@ def test_vision_returns_pass_when_response_has_no_reject(tmp_path):
     screenshot = tmp_path / ".harness_screenshot.png"
     screenshot.write_bytes(b"fakepng")
 
-    mock_message = MagicMock()
-    mock_message.content = [MagicMock(text="Score: 9/10. Clean layout. APPROVE")]
     mock_client = MagicMock()
-    mock_client.messages.create.return_value = mock_message
+    mock_client.complete_text_with_vision_png.return_value = "Score: 9/10. Clean layout. APPROVE"
 
-    with patch("evaluator.anthropic.Anthropic", return_value=mock_client):
+    with patch("evaluator.brain_client_for_role", return_value=mock_client):
         result = ev._evaluate_with_vision(screenshot)
 
     assert result.passed is True
     assert "APPROVE" in result.output
+    mock_client.complete_text_with_vision_png.assert_called_once()
 
 
 def test_vision_returns_fail_when_response_contains_reject(tmp_path):
@@ -196,12 +195,10 @@ def test_vision_returns_fail_when_response_contains_reject(tmp_path):
     screenshot = tmp_path / ".harness_screenshot.png"
     screenshot.write_bytes(b"fakepng")
 
-    mock_message = MagicMock()
-    mock_message.content = [MagicMock(text="Score: 4/10. Boring AI slop. REJECT")]
     mock_client = MagicMock()
-    mock_client.messages.create.return_value = mock_message
+    mock_client.complete_text_with_vision_png.return_value = "Score: 4/10. Boring AI slop. REJECT"
 
-    with patch("evaluator.anthropic.Anthropic", return_value=mock_client):
+    with patch("evaluator.brain_client_for_role", return_value=mock_client):
         result = ev._evaluate_with_vision(screenshot)
 
     assert result.passed is False
@@ -214,35 +211,55 @@ def test_vision_reject_check_is_case_insensitive(tmp_path):
     screenshot = tmp_path / ".harness_screenshot.png"
     screenshot.write_bytes(b"fakepng")
 
-    mock_message = MagicMock()
-    mock_message.content = [MagicMock(text="Score: 3/10. reject this immediately.")]
     mock_client = MagicMock()
-    mock_client.messages.create.return_value = mock_message
+    mock_client.complete_text_with_vision_png.return_value = "Score: 3/10. reject this immediately."
 
-    with patch("evaluator.anthropic.Anthropic", return_value=mock_client):
+    with patch("evaluator.brain_client_for_role", return_value=mock_client):
         result = ev._evaluate_with_vision(screenshot)
 
     assert result.passed is False
 
 
 def test_vision_handles_auth_error_gracefully(tmp_path):
-    import anthropic as anthropic_module
-
     config = FakeConfig()
     ev = PlaywrightVisualEvaluator(config)
     screenshot = tmp_path / ".harness_screenshot.png"
     screenshot.write_bytes(b"fakepng")
 
-    with patch("evaluator.anthropic.Anthropic") as mock_cls:
-        mock_cls.return_value.messages.create.side_effect = anthropic_module.AuthenticationError(
-            message="Invalid API key",
-            response=MagicMock(status_code=401, headers={}),
-            body={},
-        )
+    class AuthenticationError(Exception):
+        pass
+
+    mock_client = MagicMock()
+    mock_client.complete_text_with_vision_png.side_effect = AuthenticationError("Invalid API key")
+
+    with patch("evaluator.brain_client_for_role", return_value=mock_client):
         result = ev._evaluate_with_vision(screenshot)
 
     assert result.passed is False
     assert "authentication" in result.output.lower()
+
+
+def test_vision_evaluator_openai_provider_uses_factory_client(tmp_path):
+    """Brain uses OpenAI path when evaluator_provider is openai (mocked client)."""
+    config = FakeConfig()
+    config.models = {
+        "evaluator": "gpt-4o",
+        "evaluator_provider": "openai",
+    }
+    ev = PlaywrightVisualEvaluator(config)
+    screenshot = tmp_path / ".harness_screenshot.png"
+    screenshot.write_bytes(b"\x89PNG\r\n")
+
+    mock_client = MagicMock()
+    mock_client.complete_text_with_vision_png.return_value = "Looks good.\nAPPROVE"
+
+    with patch("llm_provider.LLMProviderFactory.create", return_value=mock_client):
+        result = ev._evaluate_with_vision(screenshot)
+
+    assert result.passed is True
+    call_kw = mock_client.complete_text_with_vision_png.call_args
+    assert call_kw[0][0] == "gpt-4o"
+    assert call_kw[1]["png_bytes"] == b"\x89PNG\r\n"
 
 
 # ─── PlaywrightVisualEvaluator — full pipeline integration ────────────────────

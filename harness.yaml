@@ -26,11 +26,18 @@ paths:
 # ------------------------------------------
 # THE EFFICIENCY ENGINE: Asymmetric Model Routing
 # ------------------------------------------
+# Model ids per role. For Brain API roles (evaluator, contract_verifier), optional
+# {role}_provider: anthropic | openai | openai-compatible
+# {role}_base_url: required when provider is openai-compatible (DeepSeek, Groq, Ollama, etc.)
 models:
   planner: "claude-opus-4-6"
   generator: "claude-haiku-4-6"
   evaluator: "claude-sonnet-4-6"
+  # evaluator_provider: "openai"
+  # evaluator: "gpt-4o"
   contract_verifier: "claude-3-5-sonnet-20241022"
+  # contract_verifier_provider: "openai-compatible"
+  # contract_verifier_base_url: "https://api.deepseek.com"
 
 # ------------------------------------------
 # THE SANDBOX: Execution Environment
