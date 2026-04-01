@@ -231,7 +231,10 @@ _TASK_PATH_RE = re.compile(
 
 
 def direct_files_from_task(description: str, workspace: Path) -> list[str]:
-    """Heuristic: paths in task text that exist under workspace."""
+    """Heuristic: paths in task text that exist under workspace.
+
+    Intentionally narrow (explicit ``path/to/file.ts`` segments); not a general path parser.
+    """
     ws = workspace.resolve()
     found: set[str] = set()
     for m in _TASK_PATH_RE.finditer(description):
@@ -261,11 +264,24 @@ PROJECT_MAP_LINE_THRESHOLD = 500
 _PLAN_TASK_LINE_RE = re.compile(r"^- \[([ x])\] (TASK_\d+): (.+)$")
 
 
+def line_count_from_text(raw: str) -> int:
+    """Line count for a buffer; same rule as reading ``.project_map.json`` for threshold checks."""
+    return len(raw.splitlines())
+
+
 def count_project_map_lines(project_map_path: Path) -> int:
     """Line count of ``.project_map.json`` (used for prompt size threshold)."""
     if not project_map_path.is_file():
         return 0
-    return len(project_map_path.read_text(encoding="utf-8").splitlines())
+    return line_count_from_text(project_map_path.read_text(encoding="utf-8"))
+
+
+def _reverse_dep_entries(reverse_deps: dict[str, Any], key: str) -> list[str]:
+    """Safe iteration: hand-edited JSON may store non-lists."""
+    raw = reverse_deps.get(key)
+    if not isinstance(raw, list):
+        return []
+    return [x for x in raw if isinstance(x, str)]
 
 
 def task_description_for_task_id(plan_file: Path, task_id: str) -> Optional[str]:
@@ -282,9 +298,12 @@ def task_description_for_task_id(plan_file: Path, task_id: str) -> Optional[str]
 def _neighborhood_for_seeds(
     seed_files: list[str],
     files: dict[str, Any],
-    reverse_deps: dict[str, list[str]],
-) -> list[str]:
-    """1-hop neighborhood: seeds + their import targets + their dependents (sorted, deterministic)."""
+    reverse_deps: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """1-hop neighborhood: seeds + their import targets + their dependents (sorted, deterministic).
+
+    Returns ``(neighborhood_files, applied_seed_files)`` — only paths present in ``files`` are seeds.
+    """
     known = set(files.keys())
     seeds = sorted({s for s in seed_files if s in known})
     neighborhood: set[str] = set(seeds)
@@ -294,33 +313,35 @@ def _neighborhood_for_seeds(
             r = imp.get("resolved")
             if r and r in known:
                 neighborhood.add(r)
-        for dep in reverse_deps.get(f, []):
+        for dep in _reverse_dep_entries(reverse_deps, f):
             if dep in known:
                 neighborhood.add(dep)
 
-    return sorted(neighborhood)
+    return sorted(neighborhood), seeds
 
 
 def dependency_pruning(
     task_id: str,
     *,
-    plan_file: Path,
+    plan_file: Optional[Path],
     workspace: Path,
     project_map: dict[str, Any],
     fallback_description: Optional[str] = None,
 ) -> dict[str, Any]:
     """Extract a deterministic 1-hop sub-graph for the task (AIRE: same inputs → same output).
 
-    Seeds come from file paths in the PLAN line for ``task_id``. If that line is missing,
-    ``fallback_description`` (e.g. current task description from the orchestrator) is used.
+    Seeds come from file paths in the PLAN line for ``task_id`` (when ``plan_file`` is set).
+    If that line is missing, ``fallback_description`` (e.g. current task description from the orchestrator) is used.
     """
-    desc = task_description_for_task_id(plan_file, task_id)
+    desc: Optional[str] = None
+    if plan_file is not None:
+        desc = task_description_for_task_id(plan_file, task_id)
     if not desc and fallback_description:
         desc = fallback_description
     if not desc:
         desc = ""
 
-    seed_files = direct_files_from_task(desc, workspace.resolve())
+    raw_seed_paths = direct_files_from_task(desc, workspace.resolve())
     files = project_map.get("files") or {}
     if not isinstance(files, dict):
         files = {}
@@ -328,27 +349,38 @@ def dependency_pruning(
     if not isinstance(reverse_deps, dict):
         reverse_deps = {}
 
-    neighborhood = _neighborhood_for_seeds(seed_files, files, reverse_deps)
+    known = set(files.keys())
+    neighborhood, applied_seed_files = _neighborhood_for_seeds(raw_seed_paths, files, reverse_deps)
+    not_in_graph = sorted({s for s in raw_seed_paths if s not in known})
 
     pruned_files: dict[str, Any] = {k: files[k] for k in neighborhood if k in files}
     pruned_reverse: dict[str, list[str]] = {}
     for k in neighborhood:
-        if k not in reverse_deps:
-            continue
-        vals = sorted({v for v in reverse_deps[k] if v in neighborhood})
+        entries = _reverse_dep_entries(reverse_deps, k)
+        vals = sorted({v for v in entries if v in neighborhood})
         if vals:
             pruned_reverse[k] = vals
 
-    return {
+    pruning_note: Optional[str] = None
+    if not applied_seed_files:
+        pruning_note = (
+            "No task file paths matched the project graph; run a fresh scan or fix paths in PLAN / task text."
+        )
+
+    out: dict[str, Any] = {
         "pruned": True,
         "task_id": task_id,
-        "seed_files": sorted(seed_files),
-        "neighborhood_files": sorted(neighborhood),
+        "seed_files": applied_seed_files,
+        "seed_paths_not_in_graph": not_in_graph,
+        "neighborhood_files": neighborhood,
         "version": project_map.get("version"),
         "workspace_root": project_map.get("workspace_root"),
         "files": pruned_files,
         "reverse_deps": pruned_reverse,
     }
+    if pruning_note is not None:
+        out["pruning_note"] = pruning_note
+    return out
 
 
 def dumps_project_map_deterministic(data: dict[str, Any]) -> str:

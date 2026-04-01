@@ -11,10 +11,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 from project_mapper import (
     ProjectMapper,
     PROJECT_MAP_LINE_THRESHOLD,
+    count_project_map_lines,
     dependency_pruning,
     direct_files_from_task,
     dumps_project_map_deterministic,
     impacted_files,
+    line_count_from_text,
     task_description_for_task_id,
 )
 
@@ -104,6 +106,55 @@ def test_prompt_situational_injection(tmp_path: Path) -> None:
     assert '"files"' in text
 
 
+def test_prompt_injects_full_map_when_plan_file_missing(tmp_path: Path) -> None:
+    """Small map: full JSON even if config has no ``plan_file`` (pruning not needed)."""
+    from prompt_generator import PromptGenerator
+    from project_mapper import SituationalContext
+
+    ws = tmp_path / "ws2"
+    ws.mkdir()
+    (ws / "src").mkdir()
+    (ws / "src" / "a.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    small_map = {
+        "version": 1,
+        "files": {"src/a.ts": {"exports": [], "imports": []}},
+        "reverse_deps": {},
+    }
+    (ws / ".project_map.json").write_text(
+        __import__("json").dumps(small_map, indent=2), encoding="utf-8"
+    )
+
+    class Cfg:
+        architecture_doc = tmp_path / "A2.md"
+        spec_doc = tmp_path / "S2.md"
+        workspace_dir = ws
+        prompt_buffer_path = ws / ".harness_prompt.md"
+
+    (tmp_path / "A2.md").write_text("# A")
+    (tmp_path / "S2.md").write_text("# S")
+
+    pg = PromptGenerator(Cfg())
+    ctx = SituationalContext(direct_files=["src/a.ts"], impacted_files=[])
+    text = pg.generate(
+        task_id="TASK_01",
+        task_description="Update src/a.ts",
+        attempt=1,
+        last_failure=None,
+        situational_context=ctx,
+    ).read_text(encoding="utf-8")
+    assert "Structured dependency data" in text
+    assert "full map" in text.lower() or "≤" in text
+    assert '"files"' in text
+
+
+def test_count_project_map_lines_matches_line_count_from_text(tmp_path: Path) -> None:
+    p = tmp_path / ".project_map.json"
+    body = '{\n  "a": 1\n}\n'
+    p.write_text(body, encoding="utf-8")
+    raw = p.read_text(encoding="utf-8")
+    assert count_project_map_lines(p) == line_count_from_text(raw)
+
+
 def test_task_description_for_task_id_reads_plan(tmp_path: Path) -> None:
     p = tmp_path / "PLAN.md"
     p.write_text("- [ ] TASK_02: hello world\n", encoding="utf-8")
@@ -127,6 +178,32 @@ def test_dependency_pruning_is_deterministic(tmp_path: Path) -> None:
         dependency_pruning("TASK_01", plan_file=plan, workspace=tmp_path, project_map=data)
     )
     assert o1 == o2
+
+
+def test_dependency_pruning_malformed_reverse_deps_does_not_crash(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    plan = tmp_path / "PLAN.md"
+    plan.write_text("- [ ] TASK_01: Fix src/a.ts\n", encoding="utf-8")
+    bad = {
+        "version": 1,
+        "files": {"src/a.ts": {"exports": [], "imports": []}},
+        "reverse_deps": {"src/a.ts": "not-a-list"},
+    }
+    pruned = dependency_pruning("TASK_01", plan_file=plan, workspace=tmp_path, project_map=bad)
+    assert pruned["seed_files"] == ["src/a.ts"]
+
+
+def test_seed_paths_not_in_graph_when_file_missing_from_map(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "only_on_disk.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    plan = tmp_path / "PLAN.md"
+    plan.write_text("- [ ] TASK_01: Edit src/only_on_disk.ts\n", encoding="utf-8")
+    stale = {"version": 1, "files": {}, "reverse_deps": {}}
+    pruned = dependency_pruning("TASK_01", plan_file=plan, workspace=tmp_path, project_map=stale)
+    assert pruned["seed_files"] == []
+    assert pruned["seed_paths_not_in_graph"] == ["src/only_on_disk.ts"]
+    assert "pruning_note" in pruned
 
 
 def test_pruning_large_map_stays_under_token_budget(tmp_path: Path) -> None:

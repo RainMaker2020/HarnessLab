@@ -1,6 +1,7 @@
 """PromptGenerator — assembles .harness_prompt.md for each task attempt."""
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -9,7 +10,10 @@ from project_mapper import (
     PROJECT_MAP_LINE_THRESHOLD,
     dependency_pruning,
     dumps_project_map_deterministic,
+    line_count_from_text,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from project_mapper import SituationalContext
@@ -23,18 +27,26 @@ def _dependency_graph_markdown(
     workspace_dir: Path,
     plan_file: Optional[Path],
 ) -> list[str]:
-    """Full or pruned ``.project_map.json`` for situational awareness (threshold: line count)."""
+    """Full or pruned ``.project_map.json`` for situational awareness (threshold: line count).
+
+    Full map injection only needs the map file and a line count at or below ``PROJECT_MAP_LINE_THRESHOLD``.
+    Pruning uses ``plan_file`` when present, and always uses ``task_description`` as fallback for seed paths.
+    """
     map_path = workspace_dir / ".project_map.json"
-    if not map_path.is_file() or plan_file is None:
+    if not map_path.is_file():
         return []
 
     try:
         raw_text = map_path.read_text(encoding="utf-8")
         data = json.loads(raw_text)
-    except (OSError, json.JSONDecodeError):
+    except OSError as e:
+        logger.debug("Could not read project map %s: %s", map_path, e)
+        return []
+    except json.JSONDecodeError as e:
+        logger.debug("Invalid JSON in project map %s: %s", map_path, e)
         return []
 
-    line_count = len(raw_text.splitlines())
+    line_count = line_count_from_text(raw_text)
     if line_count <= PROJECT_MAP_LINE_THRESHOLD:
         header = (
             f"Dependency graph — **full map** (`.project_map.json` has {line_count} lines, "
