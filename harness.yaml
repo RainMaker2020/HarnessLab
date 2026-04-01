@@ -1,0 +1,9 @@
+workspace_dir: ./workspace
+architecture_doc: ./ARCHITECTURE.md
+spec_doc: ./SPEC.md
+plan_file: ./workspace/PLAN.md
+history_file: ./docs/history.json
+build_command: "echo 'EVALUATOR_PLACEHOLDER: always passes'"
+max_retries: 3
+claude_model: claude-sonnet-4-6
+worker_mode: local
