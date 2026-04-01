@@ -269,7 +269,7 @@ class SubOrchestrator:
                         config.distillation_export,
                         config.plan_file,
                     )
-            except (OSError, RuntimeError, ValueError) as exc:
+            except Exception as exc:
                 self.ui.info(f"Wisdom RAG unavailable — continuing without experience recall: {exc}")
                 self._wisdom = None
         self.git = GitManager(config.workspace_dir, ui)
@@ -344,7 +344,7 @@ class SubOrchestrator:
         if self._wisdom is not None:
             try:
                 wisdom_lessons = self._wisdom.retrieve_lessons(task.description, top_k=3)
-            except (OSError, RuntimeError, ValueError) as exc:
+            except Exception as exc:
                 self.ui.info(f"Wisdom retrieval skipped: {exc}")
                 wisdom_lessons = []
 
@@ -440,7 +440,7 @@ class SubOrchestrator:
                     str(record.get("input") or ""),
                     str(record.get("output_git_diff") or ""),
                 )
-            except (OSError, RuntimeError, ValueError) as exc:
+            except Exception as exc:
                 self.ui.info(f"Wisdom ingest skipped: {exc}")
 
         if self.trajectory_logger is not None and prompt_file is not None:
@@ -458,7 +458,7 @@ class SubOrchestrator:
                     prompt_text,
                     git_diff,
                 )
-            except (OSError, RuntimeError, ValueError) as exc:
+            except Exception as exc:
                 self.ui.info(f"Wisdom ingest skipped: {exc}")
         self.parser.mark_done(task)
         self.ui.success(task.task_id)

@@ -130,7 +130,8 @@ def test_generate_includes_wisdom_lessons(tmp_harness):
     assert "Lessons from Experience (Level 5)" in content
     assert "ImportError: missing module" in content
     assert "Added dependency" in content
-    assert "Do not repeat the mistake" in content
+    assert "Do not repeat this mistake" in content
+    assert "```" in content
 
 
 def test_write_changelog_creates_file(tmp_harness):

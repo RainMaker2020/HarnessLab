@@ -4,4 +4,5 @@ pytest>=8.0
 pytest-mock>=3.12
 playwright>=1.40
 anthropic>=0.40
+# Default embedding may download model weights on first use; pin chromadb for reproducible CI.
 chromadb>=0.4.24

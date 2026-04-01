@@ -2,6 +2,13 @@
 
 Indexes ``docs/history.json`` and ``docs/trajectories.jsonl`` into a local ChromaDB store.
 Each vector represents: task description + failure/error + successful fix.
+
+Bulk re-index from files runs only when the **source fingerprint** changes (history,
+trajectories, or PLAN.md), so typical harness runs skip O(n) work. Ingestions after a
+successful merge still persist immediately in ChromaDB.
+
+ChromaDB's default embedding model may download artifacts on first use — air-gapped
+environments should pre-install models or pin an offline embedding strategy.
 """
 
 from __future__ import annotations
@@ -9,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -18,6 +26,8 @@ _PREVIOUS_FAILURE_START = re.compile(
 )
 _DESC_LINE = re.compile(r"\*\*Description:\*\*\s*(.+)", re.MULTILINE)
 _PLAN_TASK = re.compile(r"^- \[[ x]\]\s*(TASK_\d+):\s*(.+)\s*$", re.MULTILINE)
+
+_MANIFEST_NAME = ".wisdom_index_manifest.json"
 
 
 def _truncate(text: str, max_len: int = 4000) -> str:
@@ -51,6 +61,56 @@ def stable_id(parts: str) -> str:
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()[:32]
 
 
+def _parse_iso_ts(s: str) -> Optional[datetime]:
+    """Parse ISO timestamps from history/trajectories; fall back to None if invalid."""
+    raw = (s or "").strip()
+    if not raw:
+        return None
+    t = raw.replace("Z", "+00:00") if raw.endswith("Z") and "+00:00" not in raw else raw
+    try:
+        return datetime.fromisoformat(t)
+    except ValueError:
+        return None
+
+
+def source_fingerprint(
+    history_file: Path,
+    trajectories_file: Optional[Path],
+    plan_file: Path,
+) -> str:
+    """Stable hash of file contents; used to skip redundant bulk re-index."""
+    h = hashlib.sha256()
+    for path in (history_file, plan_file):
+        if path.is_file():
+            h.update(path.read_bytes())
+        else:
+            h.update(b"")
+    if trajectories_file is not None and trajectories_file.is_file():
+        h.update(trajectories_file.read_bytes())
+    else:
+        h.update(b"")
+    return h.hexdigest()
+
+
+def _read_manifest(manifest_path: Path) -> Optional[str]:
+    if not manifest_path.is_file():
+        return None
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        fp = data.get("fingerprint")
+        return str(fp) if fp is not None else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_manifest(manifest_path: Path, fingerprint: str) -> None:
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps({"fingerprint": fingerprint}, indent=2),
+        encoding="utf-8",
+    )
+
+
 class WisdomRAG:
     """Local ChromaDB-backed wisdom store with embedding search."""
 
@@ -64,6 +124,9 @@ class WisdomRAG:
         self._collection = None
         self._chromadb = None
         self._embed_fn = None
+
+    def _manifest_path(self) -> Path:
+        return self._persist / _MANIFEST_NAME
 
     def _ensure_client(self) -> Any:
         if self._chromadb is None:
@@ -161,7 +224,7 @@ class WisdomRAG:
             err = "(No prior failure in this sprint — first-pass success.)"
         fix = _truncate(git_diff, 6000) if git_diff.strip() else "(empty diff)"
         doc = self.build_document_text(task_description, err, fix)
-        lid = stable_id(f"traj|{task_id}|{task_description}|{fix[:500]}")
+        lid = stable_id(doc)
         self.upsert_lesson(
             lesson_id=lid,
             document_text=doc,
@@ -177,9 +240,20 @@ class WisdomRAG:
         trajectories_file: Optional[Path],
         plan_file: Path,
     ) -> int:
-        """Bulk-index ``history.json`` and ``trajectories.jsonl``. Returns number of records upserted."""
+        """Bulk-index ``history.json`` and ``trajectories.jsonl``. Returns number of records upserted.
+
+        Skips work when the source fingerprint matches the last run (manifest). ChromaDB
+        already holds ingestions from prior merges; this only refreshes from disk files.
+        Duplicate lessons (same normalized document text) are stored once via content hash ids.
+        """
+        fp = source_fingerprint(history_file, trajectories_file, plan_file)
+        manifest = self._manifest_path()
+        if _read_manifest(manifest) == fp:
+            return 0
+
         plan_map = parse_plan_descriptions(plan_file)
         count = 0
+        seen_doc_ids: set[str] = set()
 
         trajectories: list[dict[str, Any]] = []
         if trajectories_file is not None and trajectories_file.is_file():
@@ -204,11 +278,17 @@ class WisdomRAG:
 
         def fix_for_failure(entry: dict[str, Any]) -> str:
             tid = str(entry.get("task_id") or "")
-            ts = str(entry.get("timestamp") or "")
+            fail_s = str(entry.get("timestamp") or "")
+            fail_dt = _parse_iso_ts(fail_s)
             for tr in trajectories:
                 if str(tr.get("task_id")) != tid:
                     continue
-                if str(tr.get("timestamp") or "") > ts:
+                tr_s = str(tr.get("timestamp") or "")
+                tr_dt = _parse_iso_ts(tr_s)
+                if fail_dt is not None and tr_dt is not None:
+                    if tr_dt > fail_dt:
+                        return _truncate(str(tr.get("output_git_diff") or ""), 6000)
+                elif tr_s > fail_s:
                     return _truncate(str(tr.get("output_git_diff") or ""), 6000)
             return "(Fix not yet captured in trajectories — pair when available.)"
 
@@ -224,7 +304,10 @@ class WisdomRAG:
                 err = "(failure logged without evaluator/stderr text)"
             fix = fix_for_failure(entry)
             doc = self.build_document_text(desc, err, fix)
-            lid = stable_id(f"hist|{tid}|{entry.get('attempt')}|{entry.get('timestamp')}")
+            lid = stable_id(doc)
+            if lid in seen_doc_ids:
+                continue
+            seen_doc_ids.add(lid)
             self.upsert_lesson(
                 lesson_id=lid,
                 document_text=doc,
@@ -244,8 +327,10 @@ class WisdomRAG:
                 err = "(No PREVIOUS FAILURE block — likely first-attempt success.)"
             fix = _truncate(str(tr.get("output_git_diff") or ""), 6000)
             doc = self.build_document_text(desc, err, fix)
-            ts = str(tr.get("timestamp") or "")
-            lid = stable_id(f"jsonl|{tid}|{ts}|{prompt[:800]}")
+            lid = stable_id(doc)
+            if lid in seen_doc_ids:
+                continue
+            seen_doc_ids.add(lid)
             self.upsert_lesson(
                 lesson_id=lid,
                 document_text=doc,
@@ -256,11 +341,16 @@ class WisdomRAG:
             )
             count += 1
 
+        _write_manifest(manifest, fp)
         return count
 
 
 def format_wisdom_block(lessons: list[dict[str, str]]) -> list[str]:
-    """Markdown lines for PromptGenerator (Lessons from Experience)."""
+    """Markdown lines for PromptGenerator (Lessons from Experience).
+
+    Uses fenced blocks for error/fix text so Markdown metacharacters in logs do not
+    break rendering.
+    """
     if not lessons:
         return []
     lines = [
@@ -276,10 +366,21 @@ def format_wisdom_block(lessons: list[dict[str, str]]) -> list[str]:
         err = les.get("error") or "(unknown error)"
         fix = les.get("fix") or "(unknown fix)"
         lines.append(
-            f"{i}. In the past, when performing similar tasks, we encountered **{_truncate(err, 500)}**. "
-            f"We solved it by **{_truncate(fix, 500)}**. "
-            f"Do not repeat the mistake of {_truncate(err, 280)}."
+            f"{i}. In the past, when performing similar tasks, we encountered the following issue. "
+            "Do not repeat this mistake."
         )
+        lines.append("")
+        lines.append("What went wrong:")
+        lines.append("")
+        lines.append("```")
+        lines.append(_truncate(err, 500))
+        lines.append("```")
+        lines.append("")
+        lines.append("How we fixed it:")
+        lines.append("")
+        lines.append("```")
+        lines.append(_truncate(fix, 500))
+        lines.append("```")
         lines.append("")
     return lines
 

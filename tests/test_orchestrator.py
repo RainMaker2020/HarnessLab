@@ -57,6 +57,7 @@ def harness_root(tmp_path):
 def config(harness_root):
     """Fake config wired to the tmp harness root."""
     workspace = harness_root / "workspace"
+    wisdom_store = harness_root / "docs" / "wisdom_chroma"
 
     class Cfg:
         workspace_dir = workspace
@@ -64,6 +65,7 @@ def config(harness_root):
         spec_doc = harness_root / "SPEC.md"
         plan_file = workspace / "PLAN.md"
         history_file = harness_root / "docs" / "history.json"
+        resolved_wisdom_store = wisdom_store
         build_command = "echo ok"
         max_retries = 3
         models = {
@@ -104,6 +106,36 @@ def make_proc(returncode=0, stdout="done", stderr=""):
     p.stdout = stdout
     p.stderr = stderr
     return p
+
+
+def test_wisdom_rag_indexes_retrieves_and_injects_prompt(config):
+    """With wisdom enabled, index runs at init; retrieval runs per task; prompt contains lessons."""
+    config.wisdom_rag_enabled = True
+    fake_wisdom = MagicMock()
+    fake_wisdom.index_from_files.return_value = 1
+    fake_wisdom.retrieve_lessons.return_value = [
+        {
+            "task_id": "TASK_99",
+            "task_description": "Similar task",
+            "error": "Type error",
+            "fix": "Added types",
+        },
+    ]
+    with patch("sub_orchestrator.maybe_wisdom_rag", return_value=fake_wisdom):
+        orch = make_orch(config)
+    assert orch._wisdom is fake_wisdom
+    fake_wisdom.index_from_files.assert_called_once()
+    with patch.object(orch.git, "ensure_repo"), \
+         patch.object(orch.git, "current_head", return_value="abc1234"), \
+         patch.object(orch.worker, "run", return_value=make_proc(0)), \
+         patch.object(orch.evaluator, "run", return_value=MagicMock(passed=True, output="ok", exit_code=0)), \
+         patch.object(orch.git, "commit"), \
+         patch.object(orch.git, "diff_last_commit", return_value=""):
+        orch.run()
+    fake_wisdom.retrieve_lessons.assert_called()
+    prompt = (config.workspace_dir / ".harness_prompt.md").read_text()
+    assert "Lessons from Experience (Level 5)" in prompt
+    assert "Type error" in prompt
 
 
 def test_success_commits_and_marks_done(config):
