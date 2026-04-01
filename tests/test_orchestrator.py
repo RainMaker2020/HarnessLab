@@ -45,6 +45,9 @@ def config(harness_root):
         claude_model = "claude-sonnet-4-6"
         worker_mode = "local"
         evaluator_type = "exit_code"
+        interactive_mode = False  # off by default; individual tests override
+        playwright_target = "index.html"
+        vision_model = "claude-3-5-sonnet-20241022"
 
     return Cfg()
 
@@ -165,3 +168,127 @@ def test_retry_injects_last_failure_into_prompt(config):
 
     assert captured_failures[0] is None       # first attempt: no prior failure
     assert captured_failures[1] is not None   # retry: failure injected
+
+
+# ─── Interactive Pause — ObservationDeck.interactive_pause() ──────────────────
+
+def test_interactive_pause_returns_commit_on_c():
+    from ui import ObservationDeck
+    ui = ObservationDeck()
+    with patch("builtins.input", return_value="c"):
+        decision = ui.interactive_pause("TASK_01")
+    assert decision == "commit"
+
+
+def test_interactive_pause_returns_rollback_on_r():
+    from ui import ObservationDeck
+    ui = ObservationDeck()
+    with patch("builtins.input", return_value="r"):
+        decision = ui.interactive_pause("TASK_01")
+    assert decision == "rollback"
+
+
+def test_interactive_pause_override_waits_for_enter_then_returns_override_done():
+    from ui import ObservationDeck
+    ui = ObservationDeck()
+    # First input() = 'o' (menu choice), second input() = '' (Enter after editing)
+    with patch("builtins.input", side_effect=["o", ""]):
+        decision = ui.interactive_pause("TASK_01")
+    assert decision == "override_done"
+
+
+def test_interactive_pause_loops_on_invalid_input():
+    from ui import ObservationDeck
+    ui = ObservationDeck()
+    # 'x' is invalid, then 'c' is valid
+    with patch("builtins.input", side_effect=["x", "c"]):
+        decision = ui.interactive_pause("TASK_01")
+    assert decision == "commit"
+
+
+# ─── Interactive Pause — Orchestrator lifecycle integration ───────────────────
+
+def test_interactive_commit_force_commits_even_when_evaluator_fails(config):
+    """Human choosing (c) must commit even if the evaluator returned failure."""
+    config.interactive_mode = True
+    orch = make_orch(config)
+
+    with patch.object(orch.git, "ensure_repo"), \
+         patch.object(orch.git, "current_head", return_value="abc1234"), \
+         patch.object(orch.worker, "run", return_value=make_proc(0)), \
+         patch.object(orch.evaluator, "run", return_value=MagicMock(passed=False, output="fail", exit_code=1)), \
+         patch.object(orch.git, "commit") as mock_commit, \
+         patch.object(orch.git, "rollback") as mock_rollback, \
+         patch.object(orch.ui, "interactive_pause", return_value="commit"):
+        orch._run_task(orch.parser.next_task())
+
+    mock_commit.assert_called_once()
+    assert "[human-approved]" in mock_commit.call_args[0][0]
+    mock_rollback.assert_not_called()
+
+
+def test_interactive_rollback_triggers_failure_path(config):
+    """Human choosing (r) must roll back even if claude and evaluator both passed."""
+    config.interactive_mode = True
+    config.max_retries = 1  # one attempt so circuit breaker fires → SystemExit
+    orch = make_orch(config)
+
+    with patch.object(orch.git, "ensure_repo"), \
+         patch.object(orch.git, "current_head", return_value="abc1234"), \
+         patch.object(orch.worker, "run", return_value=make_proc(0)), \
+         patch.object(orch.evaluator, "run", return_value=MagicMock(passed=True, output="ok", exit_code=0)), \
+         patch.object(orch.git, "commit") as mock_commit, \
+         patch.object(orch.git, "rollback") as mock_rollback, \
+         patch.object(orch.ui, "interactive_pause", return_value="rollback"), \
+         pytest.raises(SystemExit):
+        orch._run_task(orch.parser.next_task())
+
+    mock_rollback.assert_called_once()
+    mock_commit.assert_not_called()
+
+
+def test_interactive_override_reruns_evaluator_and_commits_on_pass(config):
+    """Human choosing (o) must re-run the evaluator; if re-eval passes, commit."""
+    config.interactive_mode = True
+    orch = make_orch(config)
+
+    # First eval fails, override re-eval passes
+    eval_responses = [
+        MagicMock(passed=False, output="fail", exit_code=1),
+        MagicMock(passed=True,  output="ok",   exit_code=0),
+    ]
+
+    with patch.object(orch.git, "ensure_repo"), \
+         patch.object(orch.git, "current_head", return_value="abc1234"), \
+         patch.object(orch.worker, "run", return_value=make_proc(0)), \
+         patch.object(orch.evaluator, "run", side_effect=eval_responses), \
+         patch.object(orch.git, "commit") as mock_commit, \
+         patch.object(orch.git, "rollback") as mock_rollback, \
+         patch.object(orch.ui, "interactive_pause", return_value="override_done"):
+        orch._run_task(orch.parser.next_task())
+
+    mock_commit.assert_called_once()
+    assert "[human-override]" in mock_commit.call_args[0][0]
+    mock_rollback.assert_not_called()
+
+
+def test_interactive_override_falls_through_to_failure_when_reeval_fails(config):
+    """If override re-eval still fails and claude was also non-zero, roll back."""
+    config.interactive_mode = True
+    config.max_retries = 1
+    orch = make_orch(config)
+
+    # Both evals fail
+    eval_fail = MagicMock(passed=False, output="still broken", exit_code=1)
+
+    with patch.object(orch.git, "ensure_repo"), \
+         patch.object(orch.git, "current_head", return_value="abc1234"), \
+         patch.object(orch.worker, "run", return_value=make_proc(1)), \
+         patch.object(orch.evaluator, "run", return_value=eval_fail), \
+         patch.object(orch.git, "rollback") as mock_rollback, \
+         patch.object(orch.ui, "interactive_pause", return_value="override_done"), \
+         pytest.raises(SystemExit) as exc:
+        orch._run_task(orch.parser.next_task())
+
+    assert exc.value.code == 1
+    mock_rollback.assert_called()

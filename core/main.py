@@ -50,6 +50,9 @@ class HarnessConfig:
     claude_model: str
     worker_mode: str
     evaluator_type: str
+    interactive_mode: bool
+    playwright_target: str
+    vision_model: str
 
     @classmethod
     def from_yaml(cls, path: Path) -> "HarnessConfig":
@@ -67,6 +70,9 @@ class HarnessConfig:
             claude_model=raw.get("claude_model", "claude-sonnet-4-6"),
             worker_mode=raw.get("worker_mode", "local"),
             evaluator_type=raw.get("evaluator", "exit_code"),
+            interactive_mode=raw.get("interactive_mode", False),
+            playwright_target=raw.get("playwright_target", "index.html"),
+            vision_model=raw.get("vision_model", "claude-3-5-sonnet-20241022"),
         )
 
 
@@ -322,34 +328,75 @@ class Orchestrator:
             # 4. EVALUATE (pre-commit gatekeeper)
             eval_result = self.evaluator.run()
 
-            # 5a. SUCCESS — both gates pass
+            # 4.5. INTERACTIVE PAUSE — human reviews evaluation before commit/rollback
+            if self.config.interactive_mode:
+                decision = self.ui.interactive_pause(task.task_id)
+
+                if decision == "commit":
+                    # Human approves — force commit regardless of evaluator
+                    self._do_commit(task, tag="[human-approved]")
+                    return
+
+                elif decision == "rollback":
+                    # Human rejects — force rollback and continue retry loop
+                    self._do_failure(task, attempt, result, eval_result, "human rollback")
+                    if attempt == self.config.max_retries:
+                        self.ui.circuit_breaker(task.task_id, self.config.max_retries)
+                        sys.exit(1)
+                    continue
+
+                elif decision == "override_done":
+                    # Human edited workspace/ — re-run evaluator on the updated files
+                    self.ui.override_resumed()
+                    eval_result = self.evaluator.run()
+                    if eval_result.passed:
+                        # Re-evaluation passed — commit the human's manual fix
+                        self._do_commit(task, tag="[human-override]")
+                        return
+                    # Re-evaluation still failed — fall through to normal failure path
+
+            # 5a. SUCCESS — both gates pass (or override re-eval failed, fall to 5b)
             if claude_ok and eval_result.passed:
-                self.prompt_gen.write_changelog(task.task_id, task.description)
-                self.git.commit(f"feat: {task.task_id} completed")
-                self.parser.mark_done(task)
-                self.ui.success(task.task_id)
+                self._do_commit(task)
                 return
 
             # 5b. FAILURE — rollback, log, retry
-            failure_entry = {
-                "task_id": task.task_id,
-                "attempt": attempt,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "claude_exit_code": result.returncode,
-                "evaluator_passed": eval_result.passed,
-                "evaluator_output": eval_result.output,
-                "claude_stdout": result.stdout,
-                "claude_stderr": result.stderr,
-            }
-            self.history.append(failure_entry)
-            self.git.rollback()
-
             reason = "claude exit non-zero" if not claude_ok else "evaluator failed"
-            self.ui.failure(attempt, reason)
+            self._do_failure(task, attempt, result, eval_result, reason)
 
             if attempt == self.config.max_retries:
                 self.ui.circuit_breaker(task.task_id, self.config.max_retries)
                 sys.exit(1)
+
+    def _do_commit(self, task: Task, tag: str = "") -> None:
+        """Write changelog, commit to git, and mark the task done in PLAN.md."""
+        commit_msg = f"feat: {task.task_id} completed{f' {tag}' if tag else ''}"
+        self.prompt_gen.write_changelog(task.task_id, task.description)
+        self.git.commit(commit_msg)
+        self.parser.mark_done(task)
+        self.ui.success(task.task_id)
+
+    def _do_failure(
+        self,
+        task: Task,
+        attempt: int,
+        result: subprocess.CompletedProcess,
+        eval_result,
+        reason: str,
+    ) -> None:
+        """Record failure to history.json, roll back workspace, and print failure message."""
+        self.history.append({
+            "task_id": task.task_id,
+            "attempt": attempt,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "claude_exit_code": result.returncode,
+            "evaluator_passed": eval_result.passed,
+            "evaluator_output": eval_result.output,
+            "claude_stdout": result.stdout,
+            "claude_stderr": result.stderr,
+        })
+        self.git.rollback()
+        self.ui.failure(attempt, reason)
 
 
 def _build_evaluator(config: HarnessConfig) -> BaseEvaluator:

@@ -81,3 +81,43 @@ class ObservationDeck:
     def info(self, message: str) -> None:
         """Print a dim informational message."""
         self._console.print(f"[dim]{message}[/dim]")
+
+    def interactive_pause(self, task_id: str) -> str:
+        """Pause the pipeline and present the Observation Deck decision menu.
+
+        Blocks until the human makes a valid choice. Returns one of:
+          'commit'        — human approves, force commit regardless of evaluator
+          'rollback'      — human rejects, force rollback
+          'override_done' — human edited workspace/ manually, ready to re-evaluate
+
+        For 'override_done', this method blocks a second time (waits for Enter)
+        to give the human time to make manual edits before returning control.
+        """
+        self._console.print(
+            f"\n[bold magenta]┌── Observation Deck ──────────────────────────────┐[/bold magenta]"
+            f"\n[bold magenta]│[/bold magenta]  Task [bold]{task_id}[/bold] has been evaluated."
+            f"\n[bold magenta]└──────────────────────────────────────────────────┘[/bold magenta]"
+        )
+        while True:
+            choice = input(
+                f"  (c) commit   (r) rollback   (o) override — edit workspace manually\n"
+                f"  > "
+            ).strip().lower()
+
+            if choice == "c":
+                return "commit"
+            elif choice == "r":
+                return "rollback"
+            elif choice == "o":
+                self._console.print(
+                    "\n[bold yellow]  ⏸  Override Mode[/bold yellow]\n"
+                    "  Edit workspace/ now. Press [bold]Enter[/bold] when done to re-evaluate."
+                )
+                input()
+                return "override_done"
+            else:
+                self._console.print("[red]  Invalid choice. Enter c, r, or o.[/red]")
+
+    def override_resumed(self) -> None:
+        """Print that the override session ended and evaluation is re-running."""
+        self._console.print("[dim]  Override complete — re-evaluating workspace...[/dim]")

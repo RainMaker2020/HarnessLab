@@ -8,3 +8,6 @@ max_retries: 3
 claude_model: claude-sonnet-4-6
 worker_mode: local
 evaluator: exit_code
+interactive_mode: false
+playwright_target: index.html
+vision_model: claude-3-5-sonnet-20241022
