@@ -47,12 +47,11 @@ class HarnessConfig:
     history_file: Path
     build_command: str
     max_retries: int
-    claude_model: str
+    models: dict
     worker_mode: str
     evaluator_type: str
     interactive_mode: bool
     playwright_target: str
-    vision_model: str
 
     @classmethod
     def from_yaml(cls, path: Path) -> "HarnessConfig":
@@ -67,12 +66,15 @@ class HarnessConfig:
             history_file=(base / raw["history_file"]).resolve(),
             build_command=raw["build_command"],
             max_retries=raw.get("max_retries", 3),
-            claude_model=raw.get("claude_model", "claude-sonnet-4-6"),
+            models=raw.get("models") or {
+                "planner": raw.get("claude_model", "claude-sonnet-4-6"),
+                "generator": raw.get("claude_model", "claude-sonnet-4-6"),
+                "evaluator": raw.get("vision_model", "claude-3-5-sonnet-20241022"),
+            },
             worker_mode=raw.get("worker_mode", "local"),
             evaluator_type=raw.get("evaluator", "exit_code"),
             interactive_mode=raw.get("interactive_mode", False),
             playwright_target=raw.get("playwright_target", "index.html"),
-            vision_model=raw.get("vision_model", "claude-3-5-sonnet-20241022"),
         )
 
 

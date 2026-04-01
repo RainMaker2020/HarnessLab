@@ -12,7 +12,11 @@ class FakeConfig:
     build_command = "echo 'ok'"
     workspace_dir = Path("/tmp/workspace")
     playwright_target = "index.html"
-    vision_model = "claude-3-5-sonnet-20241022"
+    models = {
+        "planner": "claude-3-7-sonnet",
+        "generator": "claude-3-5-haiku",
+        "evaluator": "claude-3-5-sonnet-20241022",
+    }
 
 
 # ─── ExitCodeEvaluator ────────────────────────────────────────────────────────

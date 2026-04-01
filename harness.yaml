@@ -5,9 +5,11 @@ plan_file: ./workspace/PLAN.md
 history_file: ./docs/history.json
 build_command: "echo 'EVALUATOR_PLACEHOLDER: always passes'"
 max_retries: 3
-claude_model: claude-sonnet-4-6
+models:
+  planner: "claude-3-7-sonnet"      # High-reasoning for task decomposition
+  generator: "claude-3-5-haiku"    # Low-cost, high-speed coding (The Worker)
+  evaluator: "claude-3-5-sonnet-20241022" # High-scrutiny reasoning (The Hater)
 worker_mode: local
 evaluator: exit_code
 interactive_mode: false
 playwright_target: index.html
-vision_model: claude-3-5-sonnet-20241022

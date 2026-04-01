@@ -190,7 +190,8 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
             with open(screenshot_path, "rb") as f:
                 image_data = base64.standard_b64encode(f.read()).decode("utf-8")
 
-            vision_model = getattr(self.config, "vision_model", "claude-3-5-sonnet-20241022")
+            models = getattr(self.config, "models", {}) or {}
+            vision_model = models.get("evaluator", "claude-3-5-sonnet-20241022")
             client = anthropic.Anthropic()
             message = client.messages.create(
                 model=vision_model,

@@ -42,12 +42,15 @@ def config(harness_root):
         history_file = harness_root / "docs" / "history.json"
         build_command = "echo ok"
         max_retries = 3
-        claude_model = "claude-sonnet-4-6"
+        models = {
+            "planner": "claude-3-7-sonnet",
+            "generator": "claude-3-5-haiku",
+            "evaluator": "claude-3-5-sonnet-20241022",
+        }
         worker_mode = "local"
         evaluator_type = "exit_code"
         interactive_mode = False  # off by default; individual tests override
         playwright_target = "index.html"
-        vision_model = "claude-3-5-sonnet-20241022"
 
     return Cfg()
 
