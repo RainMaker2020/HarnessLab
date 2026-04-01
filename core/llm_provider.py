@@ -2,6 +2,11 @@
 
 Supports Anthropic Messages API, OpenAI Chat Completions, and OpenAI-compatible
 servers (DeepSeek, Groq, Ollama) via ``base_url``.
+
+OpenAI-compatible HTTP APIs disagree on completion-budget fields: some expect
+``max_tokens``, others ``max_completion_tokens`` (notably reasoning models).
+:class:`OpenAILLMClient` sends one at a time and retries with the alternate name
+when the server rejects the first (see ``_chat_completions_create_with_token_budget``).
 """
 
 from __future__ import annotations
@@ -20,6 +25,91 @@ try:
     from openai import OpenAI
 except ImportError:  # pragma: no cover
     OpenAI = None  # type: ignore[assignment]
+
+
+def _flatten_openai_error_message(exc: BaseException) -> str:
+    """Collect human-readable text from OpenAI SDK errors for heuristics."""
+    parts: list[str] = [str(exc)]
+    body = getattr(exc, "body", None)
+    if body is not None:
+        parts.append(str(body))
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        text = getattr(resp, "text", None)
+        if text:
+            parts.append(str(text))
+    return " ".join(parts).lower()
+
+
+def _is_retryable_token_limit_error(exc: BaseException) -> bool:
+    """True if retrying with the alternate token-budget parameter may help.
+
+    OpenAI reasoning models and some third-party APIs accept ``max_completion_tokens``
+    but reject ``max_tokens`` (or the reverse). DeepSeek/Groq/Ollama compatibility
+    varies; we only retry on errors that look parameter-related, not auth/rate limits.
+    """
+    status = getattr(exc, "status_code", None)
+    if status == 401 or status == 403:
+        return False
+    if status == 429:
+        return False
+    if status is not None and status >= 500:
+        return False
+
+    if isinstance(exc, TypeError):
+        msg = str(exc).lower()
+        return "max_token" in msg or "unexpected keyword" in msg
+
+    if status is not None and status not in (400, 404, 422):
+        return False
+
+    msg = _flatten_openai_error_message(exc)
+    if not msg.strip():
+        return False
+
+    if any(
+        h in msg
+        for h in (
+            "max_tokens",
+            "max_completion_tokens",
+            "completion_tokens",
+            "reasoning",
+        )
+    ):
+        return True
+    if "unsupported" in msg or "unknown parameter" in msg or "not supported" in msg:
+        return True
+    if "invalid" in msg and ("parameter" in msg or "field" in msg):
+        return True
+    return False
+
+
+def _chat_completions_create_with_token_budget(
+    client: Any,
+    *,
+    model: str,
+    messages: list,
+    max_tokens: int,
+) -> Any:
+    """Call ``chat.completions.create`` with a completion budget; alternate param on failure.
+
+    Tries ``max_tokens`` first (widest OpenAI-compatible behavior). If the server
+    rejects that parameter (common for reasoning-only endpoints), retries with
+    ``max_completion_tokens`` only. Does not send both keys in one request.
+    """
+    create = client.chat.completions.create
+    attempts: tuple[tuple[str, int], ...] = (
+        ("max_tokens", max_tokens),
+        ("max_completion_tokens", max_tokens),
+    )
+    for key, value in attempts:
+        try:
+            kwargs = {key: value}
+            return create(model=model, messages=messages, **kwargs)
+        except Exception as exc:
+            if key == attempts[-1][0] or not _is_retryable_token_limit_error(exc):
+                raise
+    raise RuntimeError("unreachable: token budget attempts exhausted")  # pragma: no cover
 
 
 def extract_anthropic_message_text(message: object) -> str:
@@ -169,10 +259,11 @@ class OpenAILLMClient(BaseLLMClient):
         self._client = OpenAI(**kwargs)
 
     def complete_text(self, model: str, user_text: str, *, max_tokens: int) -> str:
-        response = self._client.chat.completions.create(
+        response = _chat_completions_create_with_token_budget(
+            self._client,
             model=model,
-            max_tokens=max_tokens,
             messages=[{"role": "user", "content": user_text}],
+            max_tokens=max_tokens,
         )
         return extract_openai_completion_text(response)
 
@@ -185,9 +276,9 @@ class OpenAILLMClient(BaseLLMClient):
         max_tokens: int,
     ) -> str:
         data_url = VisionBridge.png_bytes_to_openai_data_url(png_bytes)
-        response = self._client.chat.completions.create(
+        response = _chat_completions_create_with_token_budget(
+            self._client,
             model=model,
-            max_tokens=max_tokens,
             messages=[
                 {
                     "role": "user",
@@ -200,6 +291,7 @@ class OpenAILLMClient(BaseLLMClient):
                     ],
                 }
             ],
+            max_tokens=max_tokens,
         )
         return extract_openai_completion_text(response)
 

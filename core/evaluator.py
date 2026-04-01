@@ -24,8 +24,9 @@ DEFAULT_VISION_RUBRIC = (
     "2. Does it follow standard design principles? "
     "(visual hierarchy, appropriate spacing, readable typography, clear purpose)\n"
     "3. Score the overall design quality from 1 to 10.\n\n"
-    "If the score is below 8, you MUST include the word REJECT in your response. "
-    "If it passes (score >= 8), end with APPROVE."
+    "The harness reads only the last non-empty line of your reply. "
+    "If the score is below 8, that final line MUST be exactly REJECT. "
+    "If the score is 8 or above, that final line MUST be exactly APPROVE."
 )
 
 
