@@ -8,6 +8,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
 from main import Orchestrator, HarnessConfig
+from evaluator import ExitCodeEvaluator
+from ui import ObservationDeck
 
 
 @pytest.fixture
@@ -42,8 +44,14 @@ def config(harness_root):
         max_retries = 3
         claude_model = "claude-sonnet-4-6"
         worker_mode = "local"
+        evaluator_type = "exit_code"
 
     return Cfg()
+
+
+def make_orch(config):
+    """Build an Orchestrator with injected ExitCodeEvaluator and ObservationDeck."""
+    return Orchestrator(config, evaluator=ExitCodeEvaluator(config), ui=ObservationDeck())
 
 
 def make_proc(returncode=0, stdout="done", stderr=""):
@@ -56,7 +64,7 @@ def make_proc(returncode=0, stdout="done", stderr=""):
 
 
 def test_success_commits_and_marks_done(config):
-    orch = Orchestrator(config)
+    orch = make_orch(config)
     with patch.object(orch.git, "ensure_repo"), \
          patch.object(orch.git, "current_head", return_value="abc1234"), \
          patch.object(orch.worker, "run", return_value=make_proc(0)), \
@@ -71,7 +79,7 @@ def test_success_commits_and_marks_done(config):
 
 
 def test_failure_triggers_rollback_and_logs_history(config):
-    orch = Orchestrator(config)
+    orch = make_orch(config)
     with patch.object(orch.git, "ensure_repo"), \
          patch.object(orch.git, "current_head", return_value="abc1234"), \
          patch.object(orch.worker, "run", return_value=make_proc(1, stderr="syntax error")), \
@@ -90,7 +98,7 @@ def test_failure_triggers_rollback_and_logs_history(config):
 
 
 def test_circuit_breaker_halts_after_max_retries(config):
-    orch = Orchestrator(config)
+    orch = make_orch(config)
     with patch.object(orch.git, "ensure_repo"), \
          patch.object(orch.git, "current_head", return_value="abc1234"), \
          patch.object(orch.worker, "run", return_value=make_proc(1)), \
@@ -105,7 +113,7 @@ def test_circuit_breaker_halts_after_max_retries(config):
 
 
 def test_sos_exit_code_halts_without_rollback(config):
-    orch = Orchestrator(config)
+    orch = make_orch(config)
     with patch.object(orch.git, "ensure_repo"), \
          patch.object(orch.git, "current_head", return_value="abc1234"), \
          patch.object(orch.worker, "run", return_value=make_proc(2, stdout="I need help")), \
@@ -118,7 +126,7 @@ def test_sos_exit_code_halts_without_rollback(config):
 
 
 def test_evaluator_failure_triggers_rollback_even_on_claude_success(config):
-    orch = Orchestrator(config)
+    orch = make_orch(config)
     with patch.object(orch.git, "ensure_repo"), \
          patch.object(orch.git, "current_head", return_value="abc1234"), \
          patch.object(orch.worker, "run", return_value=make_proc(0)), \
@@ -133,7 +141,7 @@ def test_evaluator_failure_triggers_rollback_even_on_claude_success(config):
 
 
 def test_retry_injects_last_failure_into_prompt(config):
-    orch = Orchestrator(config)
+    orch = make_orch(config)
     captured_failures = []
 
     def capture_generate(task_id, task_description, attempt, last_failure):

@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from evaluator import Evaluator, EvalResult
+from evaluator import ExitCodeEvaluator, EvalResult, BaseEvaluator, PlaywrightVisualEvaluator
 
 
 class FakeConfig:
@@ -15,7 +15,7 @@ class FakeConfig:
 
 def test_evalresult_passed_on_exit_zero():
     config = FakeConfig()
-    evaluator = Evaluator(config)
+    evaluator = ExitCodeEvaluator(config)
     with patch("evaluator.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="ok\n", stderr="")
         result = evaluator.run()
@@ -26,7 +26,7 @@ def test_evalresult_passed_on_exit_zero():
 
 def test_evalresult_failed_on_nonzero_exit():
     config = FakeConfig()
-    evaluator = Evaluator(config)
+    evaluator = ExitCodeEvaluator(config)
     with patch("evaluator.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="build failed")
         result = evaluator.run()
@@ -37,9 +37,23 @@ def test_evalresult_failed_on_nonzero_exit():
 
 def test_evalresult_captures_both_stdout_and_stderr():
     config = FakeConfig()
-    evaluator = Evaluator(config)
+    evaluator = ExitCodeEvaluator(config)
     with patch("evaluator.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="compiled\n", stderr="warning: unused var")
         result = evaluator.run()
     assert "compiled" in result.output
     assert "warning" in result.output
+
+
+def test_exit_code_evaluator_is_base_evaluator():
+    assert issubclass(ExitCodeEvaluator, BaseEvaluator)
+
+
+def test_playwright_evaluator_is_base_evaluator():
+    assert issubclass(PlaywrightVisualEvaluator, BaseEvaluator)
+
+
+def test_playwright_evaluator_raises_not_implemented():
+    evaluator = PlaywrightVisualEvaluator(FakeConfig())
+    with pytest.raises(NotImplementedError):
+        evaluator.run()

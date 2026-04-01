@@ -7,3 +7,4 @@ build_command: "echo 'EVALUATOR_PLACEHOLDER: always passes'"
 max_retries: 3
 claude_model: claude-sonnet-4-6
 worker_mode: local
+evaluator: exit_code

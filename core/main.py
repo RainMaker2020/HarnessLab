@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""HarnessLab Orchestrator — manages the AI-driven coding task lifecycle."""
+"""HarnessLab Orchestrator — lightweight entry point for the AI coding task lifecycle.
+
+Pipeline: PLAN.md → PromptGenerator → Worker (claude CLI) → BaseEvaluator → git commit/rollback.
+All sub-concerns live in their own modules:
+  ui.py           — ObservationDeck (all terminal output)
+  model_router.py — ModelRouter (dynamic model selection from harness.yaml)
+  docker_manager.py — DockerManager (sandbox container lifecycle)
+  evaluator.py    — BaseEvaluator + concrete implementations
+  prompt_generator.py — PromptGenerator (prompt assembly)
+"""
 
 import json
 import re
@@ -11,12 +20,12 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from rich.console import Console
 
+from docker_manager import DockerManager, HarnessError
+from evaluator import BaseEvaluator, ExitCodeEvaluator, PlaywrightVisualEvaluator
+from model_router import ModelRouter
 from prompt_generator import PromptGenerator
-from evaluator import Evaluator
-
-console = Console()
+from ui import ObservationDeck
 
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
@@ -25,7 +34,11 @@ EXIT_SOS = 2
 
 @dataclass
 class HarnessConfig:
-    """Loaded from harness.yaml. Single source of truth for all paths and settings."""
+    """Responsibility: Loaded from harness.yaml; single source of truth for all paths and settings.
+
+    Every component receives a HarnessConfig rather than raw strings, ensuring that
+    harness.yaml is the only file a human needs to edit to change runtime behaviour.
+    """
 
     workspace_dir: Path
     architecture_doc: Path
@@ -36,6 +49,7 @@ class HarnessConfig:
     max_retries: int
     claude_model: str
     worker_mode: str
+    evaluator_type: str
 
     @classmethod
     def from_yaml(cls, path: Path) -> "HarnessConfig":
@@ -52,6 +66,7 @@ class HarnessConfig:
             max_retries=raw.get("max_retries", 3),
             claude_model=raw.get("claude_model", "claude-sonnet-4-6"),
             worker_mode=raw.get("worker_mode", "local"),
+            evaluator_type=raw.get("evaluator", "exit_code"),
         )
 
 
@@ -65,11 +80,16 @@ class Task:
 
 
 class PlanParser:
-    """Parses workspace/PLAN.md for unchecked TASK_XX items."""
+    """Responsibility: Parses workspace/PLAN.md to find and mark off TASK_XX items.
+
+    Provides the Orchestrator with the next pending task and marks it complete
+    after a successful commit. Task IDs (TASK_01, TASK_02, …) are deterministic
+    keys used in history.json and git commit messages.
+    """
 
     TASK_RE = re.compile(r"^- \[ \] (TASK_\d+): (.+)$")
 
-    def __init__(self, plan_file: Path):
+    def __init__(self, plan_file: Path) -> None:
         """Initialize with path to PLAN.md."""
         self.plan_file = plan_file
 
@@ -90,9 +110,13 @@ class PlanParser:
 
 
 class HistoryManager:
-    """Reads and writes docs/history.json — the audit log of all task failures."""
+    """Responsibility: Reads and writes docs/history.json — the persistent failure audit log.
 
-    def __init__(self, history_file: Path):
+    On failure, appends a structured entry. On retry, supplies the last failure entry
+    to PromptGenerator so Claude can learn from prior mistakes within the same task.
+    """
+
+    def __init__(self, history_file: Path) -> None:
         """Initialize, creating the history file if it does not exist."""
         self.history_file = history_file
         if not self.history_file.exists():
@@ -113,20 +137,33 @@ class HistoryManager:
 
 
 class GitManager:
-    """Performs git operations inside workspace/."""
+    """Responsibility: Performs git operations inside workspace/ for commit and rollback.
 
-    def __init__(self, workspace_dir: Path):
-        """Initialize with the workspace directory path."""
+    After claude succeeds and the evaluator passes, GitManager commits the change.
+    On failure, it performs a hard reset + clean to restore the workspace to the
+    last known good state before the next retry attempt.
+    """
+
+    def __init__(self, workspace_dir: Path, ui: ObservationDeck) -> None:
+        """Initialize with the workspace directory path and an ObservationDeck."""
         self.workspace_dir = workspace_dir
+        self.ui = ui
 
     def _run(self, *args: str) -> subprocess.CompletedProcess:
-        """Run a git command inside workspace_dir."""
-        return subprocess.run(
-            list(args),
-            cwd=self.workspace_dir,
-            capture_output=True,
-            text=True,
-        )
+        """Run a git command inside workspace_dir, raising HarnessError on failure."""
+        try:
+            return subprocess.run(
+                list(args),
+                cwd=self.workspace_dir,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as exc:
+            raise HarnessError(
+                "git executable not found. Install git and ensure it is on PATH."
+            ) from exc
+        except subprocess.SubprocessError as exc:
+            raise HarnessError(f"git command failed unexpectedly: {exc}") from exc
 
     def ensure_repo(self) -> None:
         """Initialize workspace/ as a git repo if it doesn't already have one."""
@@ -138,7 +175,7 @@ class GitManager:
             (self.workspace_dir / ".gitkeep").touch()
             self._run("git", "add", ".")
             self._run("git", "commit", "-m", "chore: init workspace")
-            console.print("[dim]Initialized workspace git repo.[/dim]")
+            self.ui.workspace_initialized()
 
     def current_head(self) -> str:
         """Return the current HEAD commit hash."""
@@ -156,15 +193,24 @@ class GitManager:
 
 
 class Worker:
-    """Executes the claude CLI against the workspace.
+    """Responsibility: Executes the claude CLI against the workspace.
 
-    Supports worker_mode: local (direct subprocess) and docker (future).
-    Add new execution backends here by extending _run_<mode>().
+    Delegates model selection to ModelRouter (no hardcoded model strings) and Docker
+    execution to DockerManager. Wraps all subprocess calls in try/except so claude
+    not being installed or a docker exec failure returns a graceful failure result
+    rather than crashing the orchestrator.
     """
 
-    def __init__(self, config: HarnessConfig):
-        """Initialize with a HarnessConfig."""
+    def __init__(
+        self,
+        config: HarnessConfig,
+        model_router: ModelRouter,
+        docker_manager: Optional[DockerManager] = None,
+    ) -> None:
+        """Initialize with config, a ModelRouter, and an optional DockerManager."""
         self.config = config
+        self.model_router = model_router
+        self.docker_manager = docker_manager
 
     def run(self, prompt_file: Path) -> subprocess.CompletedProcess:
         """Dispatch to the correct execution backend based on worker_mode."""
@@ -176,59 +222,81 @@ class Worker:
             raise ValueError(f"Unknown worker_mode: '{self.config.worker_mode}'")
 
     def _run_local(self, prompt_file: Path) -> subprocess.CompletedProcess:
-        """Run claude --print <prompt> with cwd jailed to workspace_dir."""
+        """Run claude --print <prompt> --model <model> with cwd jailed to workspace_dir."""
         prompt_content = prompt_file.read_text()
-        return subprocess.run(
-            ["claude", "--print", prompt_content],
-            cwd=self.config.workspace_dir,
-            capture_output=True,
-            text=True,
-        )
+        model_args = self.model_router.get_model_args()
+        try:
+            return subprocess.run(
+                ["claude", "--print", prompt_content] + model_args,
+                cwd=self.config.workspace_dir,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="",
+                stderr="[Worker] claude CLI not found. Is it installed and on PATH?",
+            )
+        except subprocess.SubprocessError as exc:
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="",
+                stderr=f"[Worker] SubprocessError invoking claude: {exc}",
+            )
 
     def _run_docker(self, prompt_file: Path) -> subprocess.CompletedProcess:
-        """Future: docker exec <container_id> claude --print <prompt>."""
-        raise NotImplementedError(
-            "Docker worker mode is not yet implemented. "
-            "Set worker_mode: local in harness.yaml."
-        )
+        """Execute claude inside the Docker sandbox via DockerManager."""
+        model_args = self.model_router.get_model_args()
+        return self.docker_manager.exec_claude(prompt_file, model_args)
 
 
 class Orchestrator:
-    """Main task loop. Manages lifecycle: generate → execute → evaluate → commit/rollback."""
+    """Responsibility: Coordinates the full task lifecycle loop.
 
-    def __init__(self, config: HarnessConfig):
-        """Wire all components from the shared config."""
+    Sequences: baseline → prompt generation → execution → evaluation → commit/rollback.
+    Owns the retry counter and circuit breaker. Delegates all output to ObservationDeck,
+    all model selection to ModelRouter, all git operations to GitManager, and all
+    evaluation to the injected BaseEvaluator implementation.
+    """
+
+    def __init__(
+        self,
+        config: HarnessConfig,
+        evaluator: BaseEvaluator,
+        ui: ObservationDeck,
+    ) -> None:
+        """Wire all components. Evaluator is injected for swappability."""
         self.config = config
-        self.git = GitManager(config.workspace_dir)
+        self.ui = ui
+        self.git = GitManager(config.workspace_dir, ui)
         self.history = HistoryManager(config.history_file)
         self.prompt_gen = PromptGenerator(config)
-        self.evaluator = Evaluator(config)
+        self.evaluator = evaluator
         self.parser = PlanParser(config.plan_file)
-        self.worker = Worker(config)
+        model_router = ModelRouter(config)
+        docker_manager = DockerManager(config, ui) if config.worker_mode == "docker" else None
+        self.worker = Worker(config, model_router, docker_manager)
 
     def run(self) -> None:
         """Process all unchecked tasks in PLAN.md sequentially."""
         self.git.ensure_repo()
-        console.print("[bold]HarnessLab Orchestrator started.[/bold]")
+        self.ui.harness_started()
 
         while True:
             task = self.parser.next_task()
             if task is None:
-                console.print(
-                    "\n[bold green]✓ All tasks complete. PLAN.md is fully checked off.[/bold green]"
-                )
+                self.ui.all_done()
                 break
-            console.print(f"\n[bold cyan]━━━ {task.task_id}: {task.description} ━━━[/bold cyan]")
+            self.ui.task_start(task.task_id, task.description)
             self._run_task(task)
 
     def _run_task(self, task: Task) -> None:
         """Attempt a task up to max_retries times with rollback on failure."""
         for attempt in range(1, self.config.max_retries + 1):
-            console.print(f"[yellow]  Attempt {attempt}/{self.config.max_retries}[/yellow]")
+            self.ui.attempt_start(attempt, self.config.max_retries)
 
             # 1. BASELINE
             head = self.git.current_head()
-            console.print(f"[dim]  Baseline HEAD: {head[:8]}[/dim]")
+            self.ui.baseline(head)
 
             # 2. GENERATE prompt
             last_failure = self.history.last_failure(task.task_id)
@@ -238,21 +306,15 @@ class Orchestrator:
                 attempt=attempt,
                 last_failure=last_failure,
             )
-            console.print(f"[dim]  Prompt → {prompt_file.name}[/dim]")
+            self.ui.prompt_written(prompt_file.name)
 
             # 3. EXECUTE
-            console.print(f"[blue]  Running claude for {task.task_id}...[/blue]")
+            self.ui.executing(task.task_id)
             result = self.worker.run(prompt_file)
 
             # 3a. SOS signal — no rollback, halt immediately
             if result.returncode == EXIT_SOS:
-                console.print(
-                    f"\n[bold red]🚨 SOS (exit 2): Claude has requested human intervention.[/bold red]\n"
-                    f"[red]Task: {task.task_id}\n"
-                    f"Stdout:\n{result.stdout}\n"
-                    f"Stderr:\n{result.stderr}[/red]\n"
-                    f"[bold]No rollback performed. Halting. Review the workspace and restart.[/bold]"
-                )
+                self.ui.sos(task.task_id, result.stdout, result.stderr)
                 sys.exit(2)
 
             claude_ok = result.returncode == EXIT_SUCCESS
@@ -265,7 +327,7 @@ class Orchestrator:
                 self.prompt_gen.write_changelog(task.task_id, task.description)
                 self.git.commit(f"feat: {task.task_id} completed")
                 self.parser.mark_done(task)
-                console.print(f"[bold green]  ✓ {task.task_id} committed.[/bold green]")
+                self.ui.success(task.task_id)
                 return
 
             # 5b. FAILURE — rollback, log, retry
@@ -283,27 +345,45 @@ class Orchestrator:
             self.git.rollback()
 
             reason = "claude exit non-zero" if not claude_ok else "evaluator failed"
-            console.print(f"[red]  ✗ Attempt {attempt} failed ({reason}). Rolled back.[/red]")
+            self.ui.failure(attempt, reason)
 
             if attempt == self.config.max_retries:
-                console.print(
-                    f"\n[bold red]CIRCUIT BREAKER TRIPPED: {task.task_id} failed "
-                    f"{self.config.max_retries} consecutive times.\n"
-                    f"Halting for human intervention. Check docs/history.json for details.[/bold red]"
-                )
+                self.ui.circuit_breaker(task.task_id, self.config.max_retries)
                 sys.exit(1)
 
 
+def _build_evaluator(config: HarnessConfig) -> BaseEvaluator:
+    """Factory: return the correct BaseEvaluator implementation from harness.yaml config."""
+    evaluator_map = {
+        "exit_code": ExitCodeEvaluator,
+        "playwright": PlaywrightVisualEvaluator,
+    }
+    cls = evaluator_map.get(config.evaluator_type)
+    if cls is None:
+        raise HarnessError(
+            f"Unknown evaluator type: '{config.evaluator_type}'. "
+            f"Valid options: {list(evaluator_map.keys())}"
+        )
+    return cls(config)
+
+
 def main() -> None:
-    """Entry point. Loads harness.yaml from the project root and starts the loop."""
+    """Entry point. Loads harness.yaml, wires dependencies, and starts the loop."""
     config_path = Path(__file__).parent.parent / "harness.yaml"
+    ui = ObservationDeck()
+
     if not config_path.exists():
-        console.print(f"[bold red]Error: harness.yaml not found at {config_path}[/bold red]")
+        ui.fatal_error(f"harness.yaml not found at {config_path}")
         sys.exit(1)
 
-    config = HarnessConfig.from_yaml(config_path)
-    orchestrator = Orchestrator(config)
-    orchestrator.run()
+    try:
+        config = HarnessConfig.from_yaml(config_path)
+        evaluator = _build_evaluator(config)
+        orchestrator = Orchestrator(config, evaluator=evaluator, ui=ui)
+        orchestrator.run()
+    except HarnessError as exc:
+        ui.fatal_error(str(exc))
+        sys.exit(1)
 
 
 if __name__ == "__main__":
