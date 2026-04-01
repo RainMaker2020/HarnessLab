@@ -1,20 +1,34 @@
 #!/usr/bin/env python3
-"""Master Orchestrator — reads EPIC.md, provisions module sub-workspaces, runs SubOrchestrators."""
+"""Master Orchestrator — EPIC.md, contract-first interfaces.json, isolated Sub-Orchestrators."""
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
 from exceptions import HarnessError
+from git_isolation import provision_subrepo_workspace, provision_worktree_workspace
 from harness_config import HarnessConfig
-from sub_orchestrator import SubOrchestrator, build_evaluator
+from sub_orchestrator import build_evaluator
 from ui import ObservationDeck
+
+
+def orchestrator_class_from_main() -> type:
+    """Load the same `Orchestrator` class exported by core/main.py (alias of SubOrchestrator)."""
+    main_path = Path(__file__).resolve().parent / "main.py"
+    spec = importlib.util.spec_from_file_location("harness_main_entry", main_path)
+    if spec is None or spec.loader is None:
+        raise HarnessError(f"Cannot load orchestrator entry module: {main_path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return getattr(mod, "Orchestrator")
 
 
 @dataclass
@@ -62,13 +76,13 @@ class EpicParser:
 
 
 def slugify(title: str) -> str:
-    """Directory name for a module under workspace/modules/."""
+    """Directory name for a module under workspace/modules/ or worktrees/."""
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return s or "module"
 
 
 def parse_interface_blocks(epic_text: str) -> dict[str, str]:
-    """Parse `###` headings under `## Global Interface Contracts` into body text."""
+    """Parse `###` headings under `## Global Interface Contracts` in EPIC.md (optional prose)."""
     if "## Global Interface Contracts" not in epic_text:
         return {}
     start = epic_text.index("## Global Interface Contracts")
@@ -89,7 +103,7 @@ def interface_body_for_module(
     module_id: str,
     title: str,
 ) -> str:
-    """Resolve interface block by MODULE_XX or human title."""
+    """Resolve optional EPIC prose block by MODULE_XX or title."""
     slug = slugify(title)
     for key in (module_id, title, slug):
         if key in blocks:
@@ -97,14 +111,48 @@ def interface_body_for_module(
     return ""
 
 
-def default_global_interface(module: EpicModule) -> str:
-    """Placeholder when EPIC.md defines no interface block for this module."""
-    return (
-        f"# Global Interface Contract — {module.title} ({module.module_id})\n\n"
-        "The Master did not supply a `###` block under "
-        "`## Global Interface Contracts` for this module in EPIC.md.\n\n"
-        "**Action:** Define public function signatures, types, and events that other modules "
-        "must use. Sub-orchestrators must implement this surface without breaking callers.\n"
+def load_interfaces_json(path: Path) -> dict[str, Any]:
+    """Load docs/interfaces.json (authoritative public contracts)."""
+    if not path.exists():
+        raise HarnessError(
+            f"docs/interfaces.json is required for recursive mode but was not found: {path}"
+        )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HarnessError(f"Invalid JSON in {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise HarnessError(f"{path} must contain a JSON object at the root.")
+    return data
+
+
+def _nonempty_public_interface(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    pi = entry.get("public_interface")
+    if isinstance(pi, dict) and len(pi) > 0:
+        return True
+    exports = entry.get("exports")
+    if isinstance(exports, list) and len(exports) > 0:
+        return True
+    sig = entry.get("signatures")
+    if isinstance(sig, list) and len(sig) > 0:
+        return True
+    return False
+
+
+def resolve_module_interface_entry(data: dict[str, Any], module: EpicModule) -> dict[str, Any]:
+    """Return the module's public contract from interfaces.json (must exist before any Sub run)."""
+    modules = data.get("modules")
+    if not isinstance(modules, dict):
+        raise HarnessError("docs/interfaces.json must contain a top-level 'modules' object.")
+    slug = slugify(module.title)
+    for key in (module.module_id, slug):
+        if key in modules and _nonempty_public_interface(modules[key]):
+            return modules[key]
+    raise HarnessError(
+        f"docs/interfaces.json must define a non-empty public interface for '{module.module_id}' "
+        f"or slug '{slug}' under `modules`. Add `public_interface`, `exports`, or `signatures`."
     )
 
 
@@ -126,7 +174,7 @@ def default_module_spec(module: EpicModule, parent_spec: Path) -> str:
         "## Scope\n\n"
         "Describe what this module owns and what it explicitly does not own.\n\n"
         "## Deliverables\n\n"
-        "- Implement behavior aligned with GLOBAL_INTERFACE.md.\n"
+        "- Implement behavior aligned with GLOBAL_INTERFACE.md (rendered from docs/interfaces.json).\n"
         "- Keep all code changes under this module directory unless the Master contract says otherwise.\n"
     )
 
@@ -193,7 +241,7 @@ def write_sub_harness_yaml(module_dir: Path, parent: HarnessConfig) -> None:
 
 
 class MasterOrchestrator:
-    """Epic-level coordinator: EPIC.md modules → workspace/modules/<slug> SubOrchestrators."""
+    """Epic coordinator: EPIC.md → isolated dirs → Orchestrator from main.py (same class as linear)."""
 
     def __init__(self, config: HarnessConfig, ui: ObservationDeck) -> None:
         self.config = config
@@ -201,7 +249,12 @@ class MasterOrchestrator:
         if config.epic_path is None:
             raise HarnessError("MasterOrchestrator requires orchestration.epic_file in harness.yaml.")
         self.epic_path = config.epic_path.resolve()
+        if config.interfaces_path is None:
+            raise HarnessError("MasterOrchestrator requires paths.interfaces_file (docs/interfaces.json).")
+        self.interfaces_path = config.interfaces_path.resolve()
         self.modules_root = (config.workspace_dir / "modules").resolve()
+        self._project_root = self.config.spec_doc.resolve().parent
+        self._orchestrator_class = orchestrator_class_from_main
 
     def run(self) -> None:
         """Process every unchecked EPIC module until EPIC.md is complete."""
@@ -209,13 +262,13 @@ class MasterOrchestrator:
             raise HarnessError(f"EPIC file not found: {self.epic_path}")
 
         self.epic_path.parent.mkdir(parents=True, exist_ok=True)
-        self.modules_root.mkdir(parents=True, exist_ok=True)
 
         epic_text = self.epic_path.read_text(encoding="utf-8")
         interface_blocks = parse_interface_blocks(epic_text)
 
         self.ui.master_epic_started(self.epic_path)
         parser = EpicParser(self.epic_path)
+        interfaces_data = load_interfaces_json(self.interfaces_path)
 
         while True:
             module = parser.next_module()
@@ -224,48 +277,77 @@ class MasterOrchestrator:
                 break
 
             self.ui.epic_module_start(module.module_id, module.title)
-            module_dir = self._ensure_module_workspace(module, interface_blocks)
+
+            contract_entry = resolve_module_interface_entry(interfaces_data, module)
+
+            module_dir = self._provision_isolated_workspace(module)
+            self._write_module_artifacts(module, module_dir, contract_entry, interface_blocks)
+
             write_sub_harness_yaml(module_dir, self.config)
 
             sub_cfg = HarnessConfig.sub_workspace_config(self.config, module_dir)
             evaluator = build_evaluator(sub_cfg)
-            sub = SubOrchestrator(config=sub_cfg, evaluator=evaluator, ui=self.ui)
-            sub.run()
+            Orchestrator = self._orchestrator_class()
+            orchestrator = Orchestrator(config=sub_cfg, evaluator=evaluator, ui=self.ui)
+            orchestrator.run()
 
             parser.mark_done(module)
             self.ui.epic_module_complete(module.module_id, module.title)
 
-    def _ensure_module_workspace(
+    def _worktrees_root(self) -> Path:
+        if self.config.worktrees_root_path is not None:
+            return self.config.worktrees_root_path.resolve()
+        return (self._project_root / ".harness" / "worktrees").resolve()
+
+    def _provision_isolated_workspace(self, module: EpicModule) -> Path:
+        """Separate subrepo or git worktree — never share a working tree between Sub-Orchestrators."""
+        slug = slugify(module.title)
+        iso = self.config.sub_workspace_isolation
+
+        if iso == "worktree":
+            main_repo = self.config.workspace_dir.resolve()
+            worktree_path = self._worktrees_root() / slug
+            branch = f"harness/module-{slug.replace('-', '/')}"
+            return provision_worktree_workspace(main_repo, worktree_path, branch)
+
+        if iso == "subrepo":
+            module_dir = (self.modules_root / slug).resolve()
+            if not str(module_dir).startswith(str(self.modules_root.resolve())):
+                raise HarnessError(f"Invalid module path: {module_dir}")
+            return provision_subrepo_workspace(module_dir)
+
+        raise HarnessError(
+            f"Unknown orchestration.sub_workspace_isolation: {iso!r}. Use 'subrepo' or 'worktree'."
+        )
+
+    def _write_module_artifacts(
         self,
         module: EpicModule,
-        interface_blocks: dict[str, str],
-    ) -> Path:
-        """Create module dir, MODULE_SPEC.md, GLOBAL_INTERFACE.md, PLAN.md, history.json."""
-        subdir = slugify(module.title)
-        module_dir = (self.modules_root / subdir).resolve()
-
-        if not str(module_dir).startswith(str(self.modules_root.resolve())):
-            raise HarnessError(f"Invalid module path: {module_dir}")
-
+        module_dir: Path,
+        contract_entry: dict[str, Any],
+        epic_blocks: dict[str, str],
+    ) -> None:
+        """Write MODULE_SPEC, GLOBAL_INTERFACE (from JSON + optional EPIC prose), PLAN, history."""
         module_dir.mkdir(parents=True, exist_ok=True)
+
+        snapshot = module_dir / "PUBLIC_INTERFACE.json"
+        snapshot.write_text(json.dumps(contract_entry, indent=2), encoding="utf-8")
+
+        prose = interface_body_for_module(epic_blocks, module.module_id, module.title)
+        gi_body = (
+            f"# Global Interface Contract — {module.title} ({module.module_id})\n\n"
+            "## Authoritative contract (from docs/interfaces.json)\n\n"
+            f"```json\n{json.dumps(contract_entry, indent=2)}\n```\n"
+        )
+        if prose.strip():
+            gi_body += "\n## Notes from EPIC.md (optional)\n\n" + prose.strip() + "\n"
+
+        (module_dir / "GLOBAL_INTERFACE.md").write_text(gi_body, encoding="utf-8")
 
         spec_path = module_dir / "MODULE_SPEC.md"
         if not spec_path.exists():
             spec_path.write_text(
                 default_module_spec(module, self.config.spec_doc),
-                encoding="utf-8",
-            )
-
-        iface_body = interface_body_for_module(
-            interface_blocks, module.module_id, module.title
-        )
-        gi_path = module_dir / "GLOBAL_INTERFACE.md"
-        if not iface_body.strip():
-            gi_path.write_text(default_global_interface(module), encoding="utf-8")
-        else:
-            gi_path.write_text(
-                f"# Global Interface Contract — {module.title} ({module.module_id})\n\n"
-                f"{iface_body.strip()}\n",
                 encoding="utf-8",
             )
 
@@ -276,5 +358,3 @@ class MasterOrchestrator:
         hist = module_dir / "history.json"
         if not hist.exists():
             hist.write_text("[]", encoding="utf-8")
-
-        return module_dir

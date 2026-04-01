@@ -37,6 +37,7 @@ class PathsConfig:
     prompt_buffer: Optional[Path]
     screenshot_target: Optional[Path]
     global_interface_doc: Optional[Path]
+    interfaces_file: Optional[Path]
 
 
 @dataclass
@@ -65,6 +66,8 @@ class OrchestrationConfig:
     test_first: bool
     contract_negotiation_max_retries: int
     epic_file: Optional[Path]
+    sub_workspace_isolation: str
+    worktrees_root: Optional[Path]
 
 
 @dataclass
@@ -184,6 +187,18 @@ class HarnessConfig:
     def global_interface_doc(self) -> Optional[Path]:
         return self.paths.global_interface_doc
 
+    @property
+    def interfaces_path(self) -> Optional[Path]:
+        return self.paths.interfaces_file
+
+    @property
+    def sub_workspace_isolation(self) -> str:
+        return (self.orchestration.sub_workspace_isolation or "subrepo").strip().lower()
+
+    @property
+    def worktrees_root_path(self) -> Optional[Path]:
+        return self.orchestration.worktrees_root
+
     @classmethod
     def sub_workspace_config(cls, parent: "HarnessConfig", module_dir: Path) -> "HarnessConfig":
         """Build a HarnessConfig for a module sub-workspace (isolated PLAN, history, spec)."""
@@ -200,6 +215,7 @@ class HarnessConfig:
             prompt_buffer=module_dir / ".harness_prompt.md",
             screenshot_target=module_dir / ".harness_screenshot.png",
             global_interface_doc=gi,
+            interfaces_file=parent.paths.interfaces_file,
         )
         orch = OrchestrationConfig(
             mode="linear",
@@ -210,6 +226,8 @@ class HarnessConfig:
             test_first=parent.orchestration.test_first,
             contract_negotiation_max_retries=parent.orchestration.contract_negotiation_max_retries,
             epic_file=None,
+            sub_workspace_isolation="subrepo",
+            worktrees_root=None,
         )
         return cls(
             project=parent.project,
@@ -283,6 +301,7 @@ class HarnessConfig:
             prompt_buffer=_resolve(base, merged.get("prompt_buffer")),
             screenshot_target=_resolve(base, merged.get("screenshot_target")),
             global_interface_doc=_resolve(base, merged.get("global_interface_doc")),
+            interfaces_file=_resolve(base, merged.get("interfaces_file")),
         )
 
         runtime = RuntimeConfig(
@@ -301,6 +320,8 @@ class HarnessConfig:
 
         orch_mode = str(merged.get("orchestration_mode") or "linear").strip().lower()
         epic_resolved = _resolve(base, merged.get("epic_file"))
+        iso = str(merged.get("sub_workspace_isolation") or "subrepo").strip().lower()
+        wtr = _resolve(base, merged.get("worktrees_root"))
 
         orchestration = OrchestrationConfig(
             mode=orch_mode,
@@ -311,6 +332,8 @@ class HarnessConfig:
             test_first=bool(merged.get("test_first", False)),
             contract_negotiation_max_retries=int(merged.get("contract_negotiation_max_retries") or 3),
             epic_file=epic_resolved,
+            sub_workspace_isolation=iso,
+            worktrees_root=wtr,
         )
 
         cfg = cls(
@@ -326,6 +349,12 @@ class HarnessConfig:
                 "orchestration.mode is 'recursive' but 'epic_file' is missing. "
                 "Set paths.epic_file or orchestration.epic_file in harness.yaml."
             )
+        if cfg.orchestration_mode == "recursive":
+            if cfg.paths.interfaces_file is None:
+                raise HarnessError(
+                    "orchestration.mode is 'recursive' but 'interfaces_file' is missing. "
+                    "Set paths.interfaces_file (e.g. ./docs/interfaces.json)."
+                )
         return cfg
 
 
@@ -362,6 +391,9 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
     out["epic_file"] = raw.get("epic_file")
     out["orchestration_mode"] = raw.get("orchestration_mode")
     out["global_interface_doc"] = raw.get("global_interface_doc")
+    out["interfaces_file"] = raw.get("interfaces_file")
+    out["sub_workspace_isolation"] = raw.get("sub_workspace_isolation")
+    out["worktrees_root"] = raw.get("worktrees_root")
     if raw.get("auto_rollback") is not None:
         out["auto_rollback"] = raw["auto_rollback"]
     if raw.get("distillation_mode") is not None:
@@ -383,6 +415,8 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
             out["epic_file"] = paths["epic_file"]
         if paths.get("global_interface_doc") is not None:
             out["global_interface_doc"] = paths["global_interface_doc"]
+        if paths.get("interfaces_file") is not None:
+            out["interfaces_file"] = paths["interfaces_file"]
         for key, yaml_key in (
             ("workspace_dir", "workspace_dir"),
             ("architecture_doc", "architecture_doc"),
@@ -444,6 +478,10 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
             out["test_first"] = orch["test_first"]
         if orch.get("contract_negotiation_max_retries") is not None:
             out["contract_negotiation_max_retries"] = orch["contract_negotiation_max_retries"]
+        if orch.get("sub_workspace_isolation") is not None:
+            out["sub_workspace_isolation"] = orch["sub_workspace_isolation"]
+        if orch.get("worktrees_root") is not None:
+            out["worktrees_root"] = orch["worktrees_root"]
 
     # evaluator strategy: nested evaluation.strategy > flat evaluator
     if out.get("eval_strategy") is not None:

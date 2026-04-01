@@ -1,9 +1,10 @@
 """Tests for EPIC parsing, interface blocks, and recursive harness validation."""
 
+import json
 import textwrap
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -118,6 +119,8 @@ def test_orchestration_mode_and_epic_file_parse(tmp_path: Path) -> None:
         plan_file: ./workspace/PLAN.md
         history_file: ./docs/history.json
         build_command: "echo ok"
+        paths:
+          interfaces_file: ./docs/interfaces.json
         orchestration:
           mode: recursive
           epic_file: ./docs/EPIC.md
@@ -127,6 +130,34 @@ def test_orchestration_mode_and_epic_file_parse(tmp_path: Path) -> None:
     c = HarnessConfig.from_yaml(y)
     assert c.orchestration_mode == "recursive"
     assert c.epic_path == (tmp_path / "docs" / "EPIC.md").resolve()
+    assert c.interfaces_path == (tmp_path / "docs" / "interfaces.json").resolve()
+
+
+def test_recursive_requires_interfaces_file_in_yaml(tmp_path: Path) -> None:
+    (tmp_path / "ARCHITECTURE.md").write_text("a")
+    (tmp_path / "SPEC.md").write_text("s")
+    (tmp_path / "workspace").mkdir()
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "history.json").write_text("[]")
+    (tmp_path / "docs" / "EPIC.md").write_text("- [ ] MODULE_01: X\n")
+    y = tmp_path / "harness.yaml"
+    y.write_text(
+        textwrap.dedent(
+            """
+        workspace_dir: ./workspace
+        architecture_doc: ./ARCHITECTURE.md
+        spec_doc: ./SPEC.md
+        plan_file: ./workspace/PLAN.md
+        history_file: ./docs/history.json
+        build_command: "echo ok"
+        orchestration:
+          mode: recursive
+          epic_file: ./docs/EPIC.md
+    """
+        ).strip()
+    )
+    with pytest.raises(HarnessError, match="interfaces_file"):
+        HarnessConfig.from_yaml(y)
 
 
 def test_sub_workspace_config_points_to_module_paths(tmp_path: Path) -> None:
@@ -160,7 +191,7 @@ def test_sub_workspace_config_points_to_module_paths(tmp_path: Path) -> None:
 
 
 def test_master_provisions_module_and_skips_sub_run(tmp_path: Path) -> None:
-    """Master creates module tree and writes contract files; Sub-Orchestrator is mocked."""
+    """Master creates module tree and writes contract files; Orchestrator from main is mocked."""
     root = tmp_path
     (root / "ARCHITECTURE.md").write_text("# A")
     (root / "SPEC.md").write_text("# S")
@@ -170,6 +201,20 @@ def test_master_provisions_module_and_skips_sub_run(tmp_path: Path) -> None:
     (root / "docs" / "history.json").write_text("[]")
     epic = root / "docs" / "EPIC.md"
     epic.write_text("- [ ] MODULE_01: Auth — test module\n", encoding="utf-8")
+
+    iface = root / "docs" / "interfaces.json"
+    iface.write_text(
+        json.dumps(
+            {
+                "modules": {
+                    "MODULE_01": {
+                        "public_interface": {"login": "() => void"},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     y = root / "harness.yaml"
     y.write_text(
@@ -181,6 +226,8 @@ def test_master_provisions_module_and_skips_sub_run(tmp_path: Path) -> None:
         plan_file: ./workspace/PLAN.md
         history_file: ./docs/history.json
         build_command: "echo ok"
+        paths:
+          interfaces_file: ./docs/interfaces.json
         orchestration:
           mode: recursive
           epic_file: ./docs/EPIC.md
@@ -192,14 +239,25 @@ def test_master_provisions_module_and_skips_sub_run(tmp_path: Path) -> None:
     cfg = HarnessConfig.from_yaml(y)
     from master_orchestrator import MasterOrchestrator
 
-    master = MasterOrchestrator(cfg, ui=ObservationDeckShim())
-    with patch("master_orchestrator.SubOrchestrator.run", MagicMock()):
+    class _StubOrchestrator:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self):
+            return None
+
+    with patch(
+        "master_orchestrator.orchestrator_class_from_main",
+        return_value=_StubOrchestrator,
+    ):
+        master = MasterOrchestrator(cfg, ui=ObservationDeckShim())
         master.run()
 
     mod_dir = ws / "modules" / "auth"
     assert mod_dir.is_dir()
     assert (mod_dir / "MODULE_SPEC.md").exists()
     assert (mod_dir / "GLOBAL_INTERFACE.md").exists()
+    assert (mod_dir / "PUBLIC_INTERFACE.json").exists()
     assert (mod_dir / "PLAN.md").exists()
     assert (mod_dir / "history.json").exists()
     assert (mod_dir / "harness.yaml").exists()

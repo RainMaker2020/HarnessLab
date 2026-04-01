@@ -17,6 +17,10 @@ from sub_orchestrator import (
     Worker,
     build_evaluator,
 )
+from ui import ObservationDeck
+
+# Backward compatibility: tests and scripts expect `Orchestrator`.
+Orchestrator = SubOrchestrator
 
 __all__ = [
     "GitManager",
@@ -29,10 +33,6 @@ __all__ = [
     "build_evaluator",
     "main",
 ]
-from ui import ObservationDeck
-
-# Backward compatibility: tests and scripts expect `Orchestrator`.
-Orchestrator = SubOrchestrator
 
 
 def main() -> None:
@@ -53,7 +53,7 @@ def main() -> None:
         else:
             evaluator = build_evaluator(config)
             orchestrator = SubOrchestrator(config, evaluator=evaluator, ui=ui)
-        orchestrator.run()
+            orchestrator.run()
     except HarnessError as exc:
         ui.fatal_error(str(exc))
         sys.exit(1)

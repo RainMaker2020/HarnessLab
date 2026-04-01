@@ -14,6 +14,7 @@ paths:
   specification_doc: "./SPEC.md"
   history_log: "./docs/history.json"
   distillation_export: "./docs/trajectories.jsonl"
+  interfaces_file: "./docs/interfaces.json"
 
   workspace_dir: "./workspace"
   plan_file: "./workspace/PLAN.md"
@@ -59,6 +60,7 @@ evaluation:
 orchestration:
   mode: "linear"
   epic_file: "./docs/EPIC.md"
+  sub_workspace_isolation: "subrepo"
   max_retries_per_task: 3
   interactive_mode: false
   auto_rollback: true
