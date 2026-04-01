@@ -1,5 +1,6 @@
 """Evaluator — abstract base and concrete implementations for task quality gating."""
 
+import re
 import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -41,6 +42,117 @@ class EvalResult:
     passed: bool
     output: str
     exit_code: int
+    cross_file_regression: bool = False
+
+
+_RE_FILE_IN_ERR = re.compile(
+    r"(?:^|[\s\(\[])([\w./@-]+\.(?:ts|tsx|js|jsx|mjs|cjs)):(\d+)(?::\d+)?"
+)
+
+
+def _norm_ws_path(path_str: str, workspace: Path) -> Optional[str]:
+    """Return slash-normalized path relative to workspace if file exists."""
+    ws = workspace.resolve()
+    p = Path(path_str.strip())
+    if p.is_absolute():
+        try:
+            rel = p.resolve().relative_to(ws)
+            if (ws / rel).is_file():
+                return str(rel).replace("\\", "/")
+        except ValueError:
+            return None
+    cand = ws / path_str.replace("\\", "/")
+    if cand.is_file():
+        return str(cand.resolve().relative_to(ws)).replace("\\", "/")
+    return None
+
+
+def _extract_error_paths_from_build(output: str, workspace: Path) -> list[str]:
+    """Collect workspace-relative paths mentioned in build / stack output."""
+    found: list[str] = []
+    for m in _RE_FILE_IN_ERR.finditer(output):
+        rel = _norm_ws_path(m.group(1), workspace)
+        if rel:
+            found.append(rel)
+    return list(dict.fromkeys(found))
+
+
+def augment_build_result_with_cross_file_regression(
+    combined_output: str,
+    exit_code: int,
+    workspace: Path,
+    edited_paths: Optional[list[str]],
+) -> EvalResult:
+    """If build fails with TypeError/ReferenceError in a file not edited, flag cross-file regression."""
+    if exit_code == 0:
+        return EvalResult(
+            passed=True,
+            output=combined_output,
+            exit_code=exit_code,
+            cross_file_regression=False,
+        )
+    if not edited_paths:
+        return EvalResult(
+            passed=False,
+            output=combined_output,
+            exit_code=exit_code,
+            cross_file_regression=False,
+        )
+
+    if "TypeError" not in combined_output and "ReferenceError" not in combined_output:
+        return EvalResult(
+            passed=False,
+            output=combined_output,
+            exit_code=exit_code,
+            cross_file_regression=False,
+        )
+
+    edited = {p.replace("\\", "/") for p in edited_paths}
+    err_paths = _extract_error_paths_from_build(combined_output, workspace)
+    broken = [p for p in err_paths if p not in edited]
+
+    if not broken:
+        return EvalResult(
+            passed=False,
+            output=combined_output,
+            exit_code=exit_code,
+            cross_file_regression=False,
+        )
+
+    blocks: list[str] = [
+        combined_output,
+        "",
+        "=== CROSS-FILE REGRESSION (Hater) ===",
+        "Build failed with TypeError or ReferenceError in a file you did NOT edit.",
+        f"Edited files (this sprint): {sorted(edited)}",
+        f"Broken file(s) (downstream): {broken}",
+        "",
+    ]
+
+    ws = workspace.resolve()
+    for bpath in broken[:3]:
+        bf = ws / bpath
+        if bf.is_file():
+            body = bf.read_text(encoding="utf-8", errors="replace")
+            if len(body) > 12000:
+                body = body[:12000] + "\n... [truncated]"
+            blocks.append(f"--- Broken file: {bpath} ---\n```\n{body}\n```\n")
+
+    for epath in sorted(edited)[:5]:
+        ef = ws / epath
+        if ef.is_file():
+            body = ef.read_text(encoding="utf-8", errors="replace")
+            if len(body) > 12000:
+                body = body[:12000] + "\n... [truncated]"
+            blocks.append(f"--- Edited file: {epath} ---\n```\n{body}\n```\n")
+
+    msg = "\n".join(blocks)
+    return EvalResult(
+        passed=False,
+        output=msg,
+        exit_code=exit_code,
+        cross_file_regression=True,
+    )
 
 
 class BaseEvaluator(ABC):
@@ -54,8 +166,11 @@ class BaseEvaluator(ABC):
     """
 
     @abstractmethod
-    def run(self) -> EvalResult:
-        """Run evaluation against the workspace. Return an EvalResult."""
+    def run(self, edited_paths: Optional[list[str]] = None) -> EvalResult:
+        """Run evaluation against the workspace. Return an EvalResult.
+
+        edited_paths: workspace-relative paths changed since HEAD (for cross-file regression).
+        """
 
 
 class ExitCodeEvaluator(BaseEvaluator):
@@ -70,7 +185,7 @@ class ExitCodeEvaluator(BaseEvaluator):
         """Initialize with a config object exposing build_command and workspace_dir."""
         self.config = config
 
-    def run(self) -> EvalResult:
+    def run(self, edited_paths: Optional[list[str]] = None) -> EvalResult:
         """Run build_command. Returns EvalResult with pass/fail and combined output."""
         try:
             result = subprocess.run(
@@ -81,10 +196,26 @@ class ExitCodeEvaluator(BaseEvaluator):
                 text=True,
             )
             combined_output = (result.stdout + result.stderr).strip()
+            if result.returncode == 0:
+                return EvalResult(
+                    passed=True,
+                    output=combined_output,
+                    exit_code=0,
+                    cross_file_regression=False,
+                )
+            aug = augment_build_result_with_cross_file_regression(
+                combined_output,
+                result.returncode,
+                Path(self.config.workspace_dir),
+                edited_paths,
+            )
+            if aug.cross_file_regression:
+                return aug
             return EvalResult(
-                passed=result.returncode == 0,
+                passed=False,
                 output=combined_output,
                 exit_code=result.returncode,
+                cross_file_regression=False,
             )
         except subprocess.SubprocessError as exc:
             return EvalResult(passed=False, output=f"SubprocessError: {exc}", exit_code=1)
@@ -127,10 +258,10 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
             return p
         return self.config.workspace_dir / t
 
-    def run(self) -> EvalResult:
+    def run(self, edited_paths: Optional[list[str]] = None) -> EvalResult:
         """Run the full visual evaluation pipeline: build → screenshot → vision → result."""
         # Step 1: Build gate — fail fast before spinning up a browser
-        build_result = self._run_build()
+        build_result = self._run_build(edited_paths)
         if not build_result.passed:
             return build_result
 
@@ -146,7 +277,7 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
         # Step 3: Claude Vision quality gate
         return self._evaluate_with_vision(screenshot_path)
 
-    def _run_build(self) -> EvalResult:
+    def _run_build(self, edited_paths: Optional[list[str]] = None) -> EvalResult:
         """Run the build_command. Returns failure immediately if exit code is non-zero."""
         try:
             result = subprocess.run(
@@ -157,10 +288,26 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
                 text=True,
             )
             combined = (result.stdout + result.stderr).strip()
+            if result.returncode == 0:
+                return EvalResult(
+                    passed=True,
+                    output=combined,
+                    exit_code=0,
+                    cross_file_regression=False,
+                )
+            aug = augment_build_result_with_cross_file_regression(
+                combined,
+                result.returncode,
+                Path(self.config.workspace_dir),
+                edited_paths,
+            )
+            if aug.cross_file_regression:
+                return aug
             return EvalResult(
-                passed=result.returncode == 0,
+                passed=False,
                 output=combined,
                 exit_code=result.returncode,
+                cross_file_regression=False,
             )
         except subprocess.SubprocessError as exc:
             return EvalResult(passed=False, output=f"Build SubprocessError: {exc}", exit_code=1)

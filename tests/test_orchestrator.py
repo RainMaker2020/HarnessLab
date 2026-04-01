@@ -11,7 +11,29 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 from exceptions import HarnessError
 from main import Orchestrator
 from evaluator import ExitCodeEvaluator
+from sub_orchestrator import GitManager
 from ui import ObservationDeck
+
+
+@pytest.fixture(autouse=True)
+def _mock_project_mapper_and_git_list(request):
+    """Avoid real workspace scans and git diff in orchestrator tests that use `config`."""
+    if "config" not in request.fixturenames:
+        yield
+        return
+    from project_mapper import ProjectMap
+
+    class FakeMapper:
+        def __init__(self, wd):
+            self.wd = wd
+
+        def scan_and_write(self):
+            return ProjectMap(workspace=self.wd, files={}, reverse_deps={})
+
+    with patch("sub_orchestrator.ProjectMapper", FakeMapper), patch.object(
+        GitManager, "list_changed_files_relative", return_value=[]
+    ):
+        yield
 
 
 @pytest.fixture
@@ -382,3 +404,4 @@ def test_test_first_calls_negotiate_and_injects_contract_into_prompt(config):
     assert "The CONTRACT" in prompt
     assert "NOT allowed to modify" in prompt
     assert "vitest" in prompt
+    assert "Situational Awareness" in prompt

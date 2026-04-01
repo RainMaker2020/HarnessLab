@@ -26,6 +26,12 @@ from exceptions import HarnessError
 from harness_config import HarnessConfig
 from model_router import ModelRouter
 from planner import ContractPlanner
+from project_mapper import (
+    ProjectMapper,
+    SituationalContext,
+    direct_files_from_task,
+    impacted_files,
+)
 from prompt_generator import PromptGenerator
 from sandbox import DockerManager
 from trajectory_logger import TrajectoryLogger
@@ -165,6 +171,17 @@ class GitManager:
             return (r.stdout or "").strip()
         r = self._run("git", "diff", "--no-color", "HEAD~1", "HEAD")
         return (r.stdout or "").strip()
+
+    def list_changed_files_relative(self) -> list[str]:
+        """Paths under workspace_dir that differ from HEAD (modified tracked + untracked)."""
+        names: list[str] = []
+        r = self._run("git", "diff", "--name-only", "HEAD")
+        if r.returncode == 0:
+            names.extend(line.strip() for line in r.stdout.splitlines() if line.strip())
+        r2 = self._run("git", "ls-files", "--others", "--exclude-standard")
+        if r2.returncode == 0:
+            names.extend(line.strip() for line in r2.stdout.splitlines() if line.strip())
+        return sorted({n.replace("\\", "/") for n in names})
 
 
 class Worker:
@@ -320,12 +337,19 @@ class SubOrchestrator:
             self.ui.baseline(head)
 
             last_failure = self.history.last_failure(task.task_id)
+            project_map = ProjectMapper(self.config.workspace_dir).scan_and_write()
+            direct = direct_files_from_task(task.description, self.config.workspace_dir)
+            situational = SituationalContext(
+                direct_files=direct,
+                impacted_files=impacted_files(direct, project_map),
+            )
             prompt_file = self.prompt_gen.generate(
                 task_id=task.task_id,
                 task_description=task.description,
                 attempt=attempt,
                 last_failure=last_failure,
                 contract_path=contract_path,
+                situational_context=situational,
             )
             self.ui.prompt_written(prompt_file.name)
 
@@ -338,7 +362,8 @@ class SubOrchestrator:
 
             claude_ok = result.returncode == EXIT_SUCCESS
 
-            eval_result = self.evaluator.run()
+            edited_paths = self.git.list_changed_files_relative()
+            eval_result = self.evaluator.run(edited_paths=edited_paths)
 
             if self.config.interactive_mode:
                 decision = self.ui.interactive_pause(task.task_id)
@@ -356,7 +381,9 @@ class SubOrchestrator:
 
                 elif decision == "override_done":
                     self.ui.override_resumed()
-                    eval_result = self.evaluator.run()
+                    eval_result = self.evaluator.run(
+                        edited_paths=self.git.list_changed_files_relative()
+                    )
                     if eval_result.passed:
                         self._do_commit(task, tag="[human-override]", prompt_file=prompt_file)
                         return
@@ -399,6 +426,10 @@ class SubOrchestrator:
             "claude_exit_code": result.returncode,
             "evaluator_passed": eval_result.passed,
             "evaluator_output": eval_result.output,
+            "evaluator_cross_file_regression": getattr(
+                eval_result, "cross_file_regression", False
+            )
+            is True,
             "claude_stdout": result.stdout,
             "claude_stderr": result.stderr,
         })

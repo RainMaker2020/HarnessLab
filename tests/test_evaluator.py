@@ -251,3 +251,28 @@ def test_full_pipeline_fail_on_vision_reject(tmp_path):
         result = ev.run()
 
     assert result.passed is False
+
+
+def test_exit_code_cross_file_regression_flags_downstream_file(tmp_path: Path):
+    """TypeError in a file not edited → cross_file_regression with both files cited."""
+    (tmp_path / "a.ts").write_text("export function foo() { return 1; }\n", encoding="utf-8")
+    (tmp_path / "b.ts").write_text("export const z = 1;\n", encoding="utf-8")
+
+    class C:
+        build_command = "true"
+        workspace_dir = tmp_path
+
+    ev = ExitCodeEvaluator(C())
+    combined = (
+        "TypeError: cannot read property 'x' of undefined\n"
+        "    at foo (b.ts:10:5)\n"
+    )
+    with patch("evaluator.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=1, stdout=combined, stderr="")
+        result = ev.run(edited_paths=["a.ts"])
+
+    assert result.passed is False
+    assert result.cross_file_regression is True
+    assert "CROSS-FILE REGRESSION" in result.output
+    assert "b.ts" in result.output
+    assert "a.ts" in result.output

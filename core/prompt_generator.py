@@ -1,8 +1,69 @@
 """PromptGenerator — assembles .harness_prompt.md for each task attempt."""
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+from project_mapper import (
+    PROJECT_MAP_LINE_THRESHOLD,
+    dependency_pruning,
+    dumps_project_map_deterministic,
+)
+
+if TYPE_CHECKING:
+    from project_mapper import SituationalContext
+
+
+def _dependency_graph_markdown(
+    task_id: str,
+    task_description: str,
+    workspace_dir: Path,
+    plan_file: Optional[Path],
+) -> list[str]:
+    """Full or pruned ``.project_map.json`` for situational awareness (threshold: line count)."""
+    map_path = workspace_dir / ".project_map.json"
+    if not map_path.is_file() or plan_file is None:
+        return []
+
+    try:
+        raw_text = map_path.read_text(encoding="utf-8")
+        data = json.loads(raw_text)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    line_count = len(raw_text.splitlines())
+    if line_count <= PROJECT_MAP_LINE_THRESHOLD:
+        header = (
+            f"Dependency graph — **full map** (`.project_map.json` has {line_count} lines, "
+            f"≤ {PROJECT_MAP_LINE_THRESHOLD} line threshold)."
+        )
+        payload = dumps_project_map_deterministic(data)
+    else:
+        header = (
+            "--- Situational Context (Pruned: Global map size exceeds threshold) ---\n\n"
+            f"`.project_map.json` has **{line_count}** lines (threshold {PROJECT_MAP_LINE_THRESHOLD}). "
+            "Only the **immediate neighborhood** of this task’s files is shown (imports + dependents)."
+        )
+        pruned = dependency_pruning(
+            task_id,
+            plan_file=plan_file,
+            workspace=workspace_dir,
+            project_map=data,
+            fallback_description=task_description,
+        )
+        payload = dumps_project_map_deterministic(pruned)
+
+    return [
+        "",
+        "### Structured dependency data (JSON)",
+        "",
+        header,
+        "",
+        "```json",
+        payload,
+        "```",
+    ]
 
 
 class PromptGenerator:
@@ -22,6 +83,7 @@ class PromptGenerator:
         attempt: int,
         last_failure: Optional[dict],
         contract_path: Optional[Path] = None,
+        situational_context: Optional["SituationalContext"] = None,
     ) -> Path:
         """Write workspace/.harness_prompt.md. Returns the path to the file."""
         architecture = self.config.architecture_doc.read_text()
@@ -44,6 +106,47 @@ class PromptGenerator:
                     gi_body,
                 ]
 
+        situational_block: list[str] = []
+        if situational_context is not None:
+            direct = situational_context.direct_files
+            impacted = situational_context.impacted_files
+            primary = situational_context.primary_file
+            plan_file = getattr(self.config, "plan_file", None)
+            graph_md = _dependency_graph_markdown(
+                task_id,
+                task_description,
+                Path(self.config.workspace_dir),
+                Path(plan_file) if plan_file is not None else None,
+            )
+            situational_block = [
+                "",
+                "---",
+                "",
+                "## Situational Awareness (Level 4)",
+                "",
+                f"You are editing **{primary}** as the primary focus for this task.",
+                "",
+                "**Directly related files** (parsed from task description):",
+                *(
+                    [f"- `{p}`" for p in direct]
+                    if direct
+                    else ["- *(none — add explicit paths in the task text for tighter mapping)*"]
+                ),
+                "",
+                "**Downstream impact:** the following files depend on imports from your direct files. "
+                "If you change a **public export or signature** in a direct file, you **MUST** update these "
+                "consumers in the **same sprint** so the application architecture stays consistent:",
+                *(
+                    [f"- `{p}`" for p in impacted]
+                    if impacted
+                    else ["- *(none in project graph — see `.project_map.json`)*"]
+                ),
+                "",
+                "The project graph is regenerated each task as `workspace/.project_map.json`.",
+                *graph_md,
+                "",
+            ]
+
         sections = [
             "# HarnessingLab v1.5 — Autonomous Task Prompt",
             f"**Generated:** {datetime.now(timezone.utc).isoformat()}",
@@ -61,6 +164,7 @@ class PromptGenerator:
             "",
             spec,
             "",
+            *situational_block,
             *global_interface_block,
             "",
             "---",
@@ -113,6 +217,12 @@ class PromptGenerator:
                 "",
                 "Diagnose the root cause before writing any code. Do not repeat the same mistake.",
             ]
+            if last_failure.get("evaluator_cross_file_regression"):
+                sections += [
+                    "",
+                    "**Note:** The previous failure was flagged as a **cross-file regression** "
+                    "(error in a file you did not edit). Fix the root cause in your edits and update dependents.",
+                ]
 
         prompt_path = getattr(self.config, "prompt_buffer_path", None) or (
             self.config.workspace_dir / ".harness_prompt.md"
