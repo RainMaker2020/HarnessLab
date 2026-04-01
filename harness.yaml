@@ -8,19 +8,20 @@ project:
 
 # ------------------------------------------
 # THE AIR-GAP: Path Management
+# All harness output lives under ./project/ so the repo root stays clean (framework + harness.yaml only).
 # ------------------------------------------
 paths:
-  architecture_doc: "./ARCHITECTURE.md"
-  specification_doc: "./SPEC.md"
-  history_log: "./docs/history.json"
-  distillation_export: "./docs/trajectories.jsonl"
-  wisdom_store: "./docs/wisdom_chroma"
-  interfaces_file: "./docs/interfaces.json"
+  architecture_doc: "./project/ARCHITECTURE.md"
+  specification_doc: "./project/SPEC.md"
+  history_log: "./project/docs/history.json"
+  distillation_export: "./project/docs/trajectories.jsonl"
+  wisdom_store: "./project/docs/wisdom_chroma"
+  interfaces_file: "./project/docs/interfaces.json"
 
-  workspace_dir: "./workspace"
-  plan_file: "./workspace/PLAN.md"
-  prompt_buffer: "./workspace/.harness_prompt.md"
-  screenshot_target: "./workspace/.harness_screenshot.png"
+  workspace_dir: "./project/workspace"
+  plan_file: "./project/workspace/PLAN.md"
+  prompt_buffer: "./project/workspace/.harness_prompt.md"
+  screenshot_target: "./project/workspace/.harness_screenshot.png"
 
 # ------------------------------------------
 # THE EFFICIENCY ENGINE: Asymmetric Model Routing
@@ -65,7 +66,7 @@ evaluation:
 # ------------------------------------------
 orchestration:
   mode: "linear"
-  epic_file: "./docs/EPIC.md"
+  epic_file: "./project/docs/EPIC.md"
   sub_workspace_isolation: "subrepo"
   max_retries_per_task: 3
   interactive_mode: false

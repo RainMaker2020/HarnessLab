@@ -388,7 +388,7 @@ class HarnessConfig:
             if cfg.paths.interfaces_file is None:
                 raise HarnessError(
                     "orchestration.mode is 'recursive' but 'interfaces_file' is missing. "
-                    "Set paths.interfaces_file (e.g. ./docs/interfaces.json)."
+                    "Set paths.interfaces_file (e.g. ./project/docs/interfaces.json)."
                 )
         return cfg
 

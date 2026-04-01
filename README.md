@@ -14,9 +14,9 @@ Many agent failures trace to context overload, unchecked optimism, and drifting 
 
 | Concept | What it means here |
 |--------|---------------------|
-| **Air-gap** | Control-plane files (`ARCHITECTURE.md`, `SPEC.md`, `harness.yaml`, `docs/`) stay distinct from the mutable `workspace/`. |
+| **Air-gap** | Control-plane files for the app under `project/` (`ARCHITECTURE.md`, `SPEC.md`, …) stay distinct from the mutable `project/workspace/`; repo root holds the harness (`core/`, `harness.yaml`). |
 | **Adversarial evaluation** | Evaluators can run build steps, **Playwright** screenshots, and **vision** rubrics (see `core/evaluator.py` and `harness.yaml`). |
-| **Recursive state** | Git in `workspace/` with **auto-rollback** on failed attempts; optional human **Observation Deck** for commit / rollback / override. |
+| **Recursive state** | Git in `project/workspace/` with **auto-rollback** on failed attempts; optional human **Observation Deck** for commit / rollback / override. |
 
 ---
 
@@ -26,10 +26,10 @@ Many agent failures trace to context overload, unchecked optimism, and drifting 
 |------------|-------------|--------|
 | **Contract negotiation** | Test-first flow: generated contract tests are verified against `SPEC.md` before implementation (`test_first`, `contract_negotiation_max_retries`). | Implemented (`core/planner.py`, `core/evaluator.py`, `sub_orchestrator`). |
 | **The “Eye”** | Playwright capture + optional multimodal (vision) review of the running UI. | Set `evaluation.strategy: playwright` in `harness.yaml`. Default config often uses `exit_code` for quick iteration. |
-| **Situational awareness** | Recursive **EPIC** mode uses `docs/interfaces.json` as the authoritative public contract map between modules. | Requires `orchestration.mode: recursive` and `paths.interfaces_file`. |
+| **Situational awareness** | Recursive **EPIC** mode uses `project/docs/interfaces.json` (configurable) as the authoritative public contract map between modules. | Requires `orchestration.mode: recursive` and `paths.interfaces_file`. |
 | **Efficiency engine** | Asymmetric model routing (`models.planner`, `generator`, `evaluator`, `contract_verifier` in `harness.yaml`). | Implemented (`core/model_router.py`). |
 | **The Jail** | Docker image with Claude Code, Node, Playwright; configurable memory and network. | Set `runtime.mode: docker` to run workers in the sandbox; default is `local`. |
-| **Economic bridge** | Trajectory logging to `docs/trajectories.jsonl`; optional **Wisdom RAG** (ChromaDB under `docs/wisdom_chroma`). | Toggle `orchestration.distillation_mode` / `wisdom_rag`. |
+| **Economic bridge** | Trajectory logging to `project/docs/trajectories.jsonl`; optional **Wisdom RAG** (ChromaDB under `project/docs/wisdom_chroma`). | Toggle `orchestration.distillation_mode` / `wisdom_rag`. |
 
 ---
 
@@ -38,13 +38,15 @@ Many agent failures trace to context overload, unchecked optimism, and drifting 
 ```text
 HarnessLab/
 ├── core/                 # Orchestrator (config, git, workers, evaluators, UI)
-├── docs/                 # Control plane: history, trajectories, EPIC/interfaces (as used)
+├── project/              # App bundle: ARCHITECTURE/SPEC, workspace/, harness docs (see project/README.md)
+├── docs/                 # Repo docs (e.g. HOW_IT_WORKS); EPIC stub points at project/docs/
 ├── sandbox/              # Docker image for isolated execution
-├── workspace/            # Data plane: git-isolated AI workspace (see .gitignore)
 ├── tests/                # Pytest suite
-├── harness.yaml          # Single source of truth for paths and behavior
+├── harness.yaml          # Single source of truth for paths and behavior (default: paths under ./project/)
 └── core/main.py          # Entry point
 ```
+
+**How it fits together (modules, task loop, CLI vs API auth):** see [`docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md).
 
 ---
 
@@ -83,11 +85,13 @@ Keep these aligned with what you inject into prompts:
 
 | File | Role |
 |------|------|
-| `ARCHITECTURE.md` | Non-negotiable engineering rules |
-| `SPEC.md` | Product definition and constraints |
-| `workspace/PLAN.md` | Linear task checklist (`TASK_01`, …) |
+| `project/ARCHITECTURE.md` | Non-negotiable engineering rules |
+| `project/SPEC.md` | Product definition and constraints |
+| `project/workspace/PLAN.md` | Linear task checklist (`TASK_01`, …) |
 
-For **recursive / EPIC** orchestration, you also need `docs/EPIC.md` and `docs/interfaces.json` (see `core/master_orchestrator.py`).
+For **recursive / EPIC** orchestration, edit `project/docs/EPIC.md` and `project/docs/interfaces.json` (see `core/master_orchestrator.py`). Paths are configurable under `harness.yaml` → `paths`.
+
+If you previously used `ARCHITECTURE.md` / `SPEC.md` / `workspace/` at the **repository root**, move those into `project/` to match the defaults (or point `paths` back at the old locations).
 
 ### Run the harness
 
@@ -109,13 +113,13 @@ When enabled, the menu matches the implementation in `core/ui.py`:
 
 - **`(c) commit`** — Approve and merge the sprint to git history.
 - **`(r) rollback`** — Discard the attempt and retry (subject to retry limits).
-- **`(o) override`** — Edit `workspace/` by hand, then resume evaluation.
+- **`(o) override`** — Edit `project/workspace/` by hand, then resume evaluation.
 
 ---
 
 ## Economics: trajectories and distillation
 
-Successful runs can append structured records to `docs/trajectories.jsonl` (path configurable in `harness.yaml`). That log is intended as a **golden dataset** for later distillation or fine-tuning of smaller models—paired with `orchestration.distillation_mode` and **Wisdom RAG** indexing when you enable them.
+Successful runs can append structured records to `project/docs/trajectories.jsonl` (path configurable in `harness.yaml`). That log is intended as a **golden dataset** for later distillation or fine-tuning of smaller models—paired with `orchestration.distillation_mode` and **Wisdom RAG** indexing when you enable them.
 
 ---
 

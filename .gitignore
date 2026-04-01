@@ -1,4 +1,7 @@
 workspace/
+# Harness project bundle (generated app + local state; specs may be committed if you choose)
+project/workspace/
+project/docs/wisdom_chroma/
 __pycache__/
 *.pyc
 .venv/
