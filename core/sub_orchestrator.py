@@ -25,6 +25,8 @@ from evaluator import (
     PlaywrightVisualEvaluator,
 )
 from exceptions import HarnessError
+from progress_tracker import ProgressTracker
+from worker_session import WorkerSession
 from harness_config import HarnessConfig
 from model_router import ModelRouter
 from planner import ContractPlanner
@@ -113,6 +115,18 @@ class PlanParser:
         lines = self.plan_file.read_text().splitlines()
         lines[task.line_index] = lines[task.line_index].replace("- [ ]", "- [x]", 1)
         self.plan_file.write_text("\n".join(lines) + "\n")
+
+    DONE_RE = re.compile(r"^- \[x\] (TASK_\d+): (.+)$")
+
+    def completed_tasks(self) -> list[str]:
+        """Return list of 'TASK_XX: description' strings for all checked-off tasks."""
+        lines = self.plan_file.read_text().splitlines()
+        return [
+            f"{m.group(1)}: {m.group(2)}"
+            for line in lines
+            for m in [self.DONE_RE.match(line.strip())]
+            if m
+        ]
 
 
 class HistoryManager:
@@ -327,11 +341,16 @@ class SubOrchestrator:
         )
         self._docker_manager = DockerManager(config, ui) if config.worker_mode == "docker" else None
         self.worker = Worker(config, model_router, self._docker_manager)
+        self._progress_tracker = ProgressTracker(config, ui)
+        self._session = None          # created lazily in run()
+        self._last_worker_output = "" # staging area for _do_commit
 
     def run(self) -> None:
         """Process all unchecked tasks in PLAN.md sequentially."""
         self.git.ensure_repo()
         self.ui.harness_started()
+
+        self._session = WorkerSession(self.config, self._progress_tracker, self.ui)
 
         if self._docker_manager is not None:
             self._docker_manager.start()
@@ -346,6 +365,9 @@ class SubOrchestrator:
         finally:
             if self._docker_manager is not None:
                 self._docker_manager.stop()
+            self.ui.info(
+                f"[SubOrchestrator] Session tokens: {self._session.session_cost_tokens}"
+            )
 
     def _negotiate_contract(self, task: Task) -> Path:
         """NEGOTIATE: generate contract tests, verify vs SPEC, lock in git."""
@@ -422,12 +444,27 @@ class SubOrchestrator:
             self.ui.prompt_written(prompt_file.name)
 
             self.ui.executing(task.task_id)
-            result = self.worker.run(prompt_file)
+            if self._session is not None:
+                try:
+                    worker_output = self._session.run_task(
+                        prompt_file.read_text(encoding="utf-8")
+                    )
+                    result = subprocess.CompletedProcess(
+                        args=[], returncode=EXIT_SUCCESS,
+                        stdout=worker_output, stderr="",
+                    )
+                except HarnessError as exc:
+                    result = subprocess.CompletedProcess(
+                        args=[], returncode=EXIT_FAILURE,
+                        stdout="", stderr=str(exc),
+                    )
+            else:
+                result = self.worker.run(prompt_file)
+                if result.returncode == EXIT_SOS:
+                    self.ui.sos(task.task_id, result.stdout, result.stderr)
+                    sys.exit(2)
 
-            if result.returncode == EXIT_SOS:
-                self.ui.sos(task.task_id, result.stdout, result.stderr)
-                sys.exit(2)
-
+            self._last_worker_output = result.stdout
             claude_ok = result.returncode == EXIT_SUCCESS
 
             edited_paths = self.git.list_changed_files_relative()
@@ -511,7 +548,19 @@ class SubOrchestrator:
             except Exception as exc:
                 self.ui.info(f"Wisdom ingest skipped: {exc}")
         self.parser.mark_done(task)
+        try:
+            self._progress_tracker.update(
+                completed_tasks=self.parser.completed_tasks(),
+                architectural_notes=self._extract_notes(self._last_worker_output),
+            )
+        except HarnessError as exc:
+            self.ui.info(f"Progress tracker update skipped: {exc}")
         self.ui.success(task.task_id)
+
+    @staticmethod
+    def _extract_notes(worker_output: str) -> str:
+        """Last 500 chars of worker output as a rough architectural note."""
+        return worker_output[-500:].strip()
 
     def _do_failure(
         self,

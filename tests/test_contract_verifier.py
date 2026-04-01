@@ -1,4 +1,4 @@
-"""Unit tests for ContractVerifier (mocked Anthropic)."""
+"""Unit tests for ContractVerifier (mocked Brain client via brain_client_for_role)."""
 
 import sys
 from pathlib import Path
