@@ -111,7 +111,7 @@ def harness_progress_text(cfg: HarnessConfig) -> str:
 def harness_commit_impl(cfg: HarnessConfig, task_id: str, message: str, repo_root: Path) -> str:
     """
     1) Require task_id to match the first unchecked PLAN task.
-    2) Run Playwright visual evaluator; on failure, do not commit.
+    2) Run the configured evaluator (respects evaluation.strategy); on failure, do not commit.
     3) git add -A && git commit at repo_root.
     """
     if not message or not message.strip():
@@ -187,7 +187,7 @@ def harness_next_task() -> str:
 
 @mcp.tool()
 def harness_eval(task_id: str) -> str:
-    """Run the Playwright visual evaluator; task_id must match the next unchecked PLAN task. Returns VERDICT line and logs."""
+    """Run the configured evaluator (respects evaluation.strategy); task_id must match the next unchecked PLAN task. Returns VERDICT line and logs."""
     load_harness_env()
     cfg = _load_config()
     return harness_eval_text(cfg, task_id=task_id.strip())
@@ -195,7 +195,7 @@ def harness_eval(task_id: str) -> str:
 
 @mcp.tool()
 def harness_commit(task_id: str, message: str) -> str:
-    """Commit only after visual eval passes; must match current next PLAN task. Uses git at repo root."""
+    """Commit only after evaluator passes (respects evaluation.strategy); must match current next PLAN task. Uses git at repo root."""
     load_harness_env()
     cfg = _load_config()
     return harness_commit_impl(cfg, task_id, message, _REPO)
