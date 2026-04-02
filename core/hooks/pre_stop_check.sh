@@ -50,15 +50,15 @@ if [ -z "$PLAN" ]; then
 fi
 # Cannot resolve PLAN.md — fail loudly, do NOT silently exit 0
 if [ -z "$PLAN" ] || [ ! -f "$PLAN" ]; then
-  echo "HARNESS BLOCK: Cannot resolve PLAN.md path from harness.yaml. Fix harness.yaml or Python env."
+  echo "HARNESS BLOCK: Cannot resolve PLAN.md path from harness.yaml. Fix harness.yaml or Python env." >&2
   exit 1
 fi
 
 REMAINING=$(grep -c '^\- \[ \]' "$PLAN" 2>/dev/null || echo 0)
 # shellcheck disable=SC2086
 if [ "$REMAINING" -gt 0 ] 2>/dev/null; then
-  echo "HARNESS BLOCK: $REMAINING tasks still pending in PLAN.md ($PLAN)."
-  echo "Run the next task before stopping."
+  echo "HARNESS BLOCK: $REMAINING tasks still pending in PLAN.md ($PLAN)." >&2
+  echo "Run the next task before stopping." >&2
   exit 1
 fi
 echo "HARNESS: All tasks complete. Safe to stop."

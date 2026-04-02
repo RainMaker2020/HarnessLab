@@ -43,9 +43,9 @@ paths:
 models:
   planner: "claude-opus-4-6"
   generator: "claude-haiku-4-6"
-  evaluator: "deepseek-chat"
-  evaluator_provider: "openai-compatible"
-  evaluator_base_url: "https://api.deepseek.com"
+  evaluator: "gpt-4o"
+  evaluator_provider: "openai"
+  # gpt-4o supports vision (image_url payloads). deepseek-* does not — do not use for playwright strategy.
   contract_verifier: "deepseek-reasoner"
   contract_verifier_provider: "openai-compatible"
   contract_verifier_base_url: "https://api.deepseek.com"
@@ -63,46 +63,51 @@ runtime:
 # THE HATER: Quality Assurance Logic
 # ------------------------------------------
 evaluation:
-  strategy: "exit_code"
-  # Primary gate (always). With test_first, also set contract_test_command so the locked
-  # *.contract.test.ts file is executed, or fold tests into build_command (e.g. npm test).
-  build_command: "echo 'EVALUATOR_PLACEHOLDER: always passes'"
+  strategy: "playwright"
+  # Build the Next.js app; kill any stale server on 3001, start fresh, wait for ready.
+  build_command: "pnpm build && fuser -k 3001/tcp 2>/dev/null; node_modules/.bin/next start -p 3001 & sleep 8"
   # Optional when test_first: shell command with {task_id}, {contract_rel}, {contract_path}
   # contract_test_command: "npx vitest run {contract_rel}"
   planner_timeout_seconds: 900
-  playwright_target: "index.html"
+  playwright_target: "http://localhost:3001?city=London"
   # Vendored design bar (Anthropic frontend-design skill — see project/docs/frontend-design-skill.md).
   # Appended to the vision prompt by PlaywrightVisualEvaluator._vision_prompt_text().
   vision_rubric_supplement: "./project/docs/frontend-design-skill.md"
   vision_rubric: |
-    You are a hostile design QA lead. Default stance: REJECT. The screenshot must prove compliance with SPEC.md; generosity is a failure mode.
+    You are a strict design QA reviewer for a glassmorphic weather dashboard. Default stance: REJECT unless all criteria below are clearly met.
 
-    **Color fidelity (hex anchors — reject if the UI clearly contradicts these)**
-    - Page background must read as a deep slate gradient, not flat mid-gray: anchors ~`#0f172a` (slate-900) → ~`#1e293b` (slate-800).
-    - Decorative orbs: one must read as sky (~`#38bdf8` / sky-400) and one as purple (~`#a855f7` / purple-500), ~20% opacity, large blurred circles—not tiny dots or solid blocks.
-    - Glass panels: semi-transparent light surfaces over dark—not opaque white cards on white, nor muddy gray slabs without blur/readable depth.
-    - Primary data accent (humidity/wind/pressure values): ~`#38bdf8` (sky-400). Muted labels: ~`#94a3b8` (slate-400). Hero/city text: white ~`#ffffff`.
-    If two or more of these are materially wrong (e.g., wrong hue family, neon on white, light mode), REJECT.
+    **Background gradient (SPEC §F6)**
+    - Full-viewport gradient from deep indigo/violet to teal/cyan — hex anchors: #1a0533 → #0f2027 → #0a3d62 → #0c6478.
+    - Gradient transitions must be visible; a single flat dark color is REJECT.
 
-    **Spacing & layout (exact expectations from SPEC)**
-    - Main column: visually centered with a clear max width (~`max-w-5xl` / ~1024px content feel—not edge-to-edge on desktop).
-    - Vertical rhythm: obvious consistent gaps between major blocks (~`space-y-6` / ~24px tier), not cramped or random.
-    - Cards/tiles: generous internal padding (~`p-6` / 24px minimum); cramped 8px padding is a fail.
-    - Metric area: three distinct columns on large viewports; forecast strip shows five peers with even spacing (or horizontal scroll on narrow widths with snap—infer from crop).
+    **Glassmorphism cards**
+    - Every card must appear semi-transparent over the gradient (backdrop-blur + bg-white/10 or similar).
+    - Opaque solid-color cards with no visible gradient behind them → REJECT.
 
-    **Accessibility (WCAG-aligned; reject on clear violations)**
-    - Search control: must have a visible label OR unambiguous `aria-label` affordance (infer from visible “Search”/label text or input context).
-    - Decorative icons: should not present as unlabeled meaningful images; expect `aria-hidden` or text alternative pattern—flag icon-only mystery controls.
-    - Contrast: primary text on glass/surfaces must appear comfortably readable (target ≥4.5:1 for normal text vs background); thin gray-on-gray body copy is REJECT.
-    - Interactive targets: primary actions must not look like tiny hit areas (flag obvious sub-40px controls).
+    **Typography (SPEC §F2)**
+    - City name: large serif (Playfair Display), text-5xl minimum, clearly distinct from body text.
+    - Hero temperature: large serif, text-7xl minimum — must dominate the page visually.
+    - Body/labels: sans-serif (Inter), clearly different from the headings.
+    - If there is no visible serif vs sans-serif distinction → REJECT.
 
-    **Typography & craft**
-    - Hero temperature must feel oversized and weighty (SPEC: ~112px class / `text-7xl` tier); tiny hero is REJECT.
-    - Data numerals should read as monospace; body as humanist sans—reject if everything is one generic system font with no hierarchy.
-    - Reject obvious “AI slop”: purple-pink gradient clichés, stock illustration feel, lorem/placeholder copy, watermarks, or broken layouts.
+    **Content completeness**
+    - Current weather card: city name, temperature with unit (°C or °F), weather description, Lucide icon, “Feels like” text.
+    - Detail grid: 4 metric tiles (Humidity, Wind Speed, Pressure, Visibility) with values and icons.
+    - Forecast strip: 5 day cards each with day name, icon, high and low temperature.
+    - Missing any of these sections → REJECT.
+
+    **Color palette**
+    - Text: white or white with opacity. No dark text on dark background.
+    - Accent icons and interactive elements: sky-400 (#38bdf8) hue.
+    - No bright neon colors, no light-mode styling.
+
+    **Layout**
+    - Content centered with clear max-width (not edge-to-edge on a 1280px viewport).
+    - Generous spacing between sections.
+    - Search bar and unit toggle visible at the top.
 
     **Scoring**
-    Score 1–10 (10 = flawless against SPEC). **APPROVE only if score is 10 AND no mandatory item above fails.** Otherwise output REJECT with concrete reasons (cite hex, spacing, or a11y gap).
+    Score 1–10 against the criteria above. APPROVE if score ≥ 8 and no mandatory item fails.
     End your response with exactly one line: `VERDICT: APPROVE` or `VERDICT: REJECT`.
 
 # ------------------------------------------
