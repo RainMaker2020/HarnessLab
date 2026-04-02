@@ -90,6 +90,21 @@ def test_playwright_evaluator_is_base_evaluator():
     assert issubclass(PlaywrightVisualEvaluator, BaseEvaluator)
 
 
+def test_vision_prompt_includes_supplement(tmp_path: Path) -> None:
+    sup = tmp_path / "extra.md"
+    sup.write_text("SUPPLEMENT_BLOCK", encoding="utf-8")
+
+    class ConfigWithSupplement(FakeConfig):
+        vision_rubric = "BASE_RUBRIC"
+        vision_rubric_supplement = sup
+
+    ev = PlaywrightVisualEvaluator(ConfigWithSupplement())
+    text = ev._vision_prompt_text()
+    assert "BASE_RUBRIC" in text
+    assert "SUPPLEMENT_BLOCK" in text
+    assert "Repo design principles" in text
+
+
 # ─── PlaywrightVisualEvaluator — _run_build ───────────────────────────────────
 
 def test_playwright_run_fails_fast_when_build_fails():

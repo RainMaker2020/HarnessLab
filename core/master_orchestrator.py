@@ -204,6 +204,23 @@ def default_plan_md(module: EpicModule) -> str:
     )
 
 
+def _module_evaluation_dict(parent: HarnessConfig, module_dir: Path) -> dict[str, Any]:
+    """Evaluation block for a sub-workspace harness; rewrites supplement path relative to module_dir."""
+    out: dict[str, Any] = {
+        "strategy": parent.evaluation.strategy,
+        "build_command": parent.evaluation.build_command,
+        "playwright_target": parent.evaluation.playwright_target,
+        "vision_rubric": parent.evaluation.vision_rubric,
+    }
+    sup = parent.evaluation.vision_rubric_supplement
+    if sup is not None:
+        try:
+            out["vision_rubric_supplement"] = os.path.relpath(sup.resolve(), module_dir.resolve())
+        except ValueError:
+            out["vision_rubric_supplement"] = str(sup)
+    return out
+
+
 def write_sub_harness_yaml(module_dir: Path, parent: HarnessConfig) -> None:
     """Emit harness.yaml for audit; paths are relative to module_dir where possible."""
     arch = parent.architecture_doc.resolve()
@@ -235,12 +252,7 @@ def write_sub_harness_yaml(module_dir: Path, parent: HarnessConfig) -> None:
             "memory_limit": parent.runtime.memory_limit,
             "network_access": parent.runtime.network_access,
         },
-        "evaluation": {
-            "strategy": parent.evaluation.strategy,
-            "build_command": parent.evaluation.build_command,
-            "playwright_target": parent.evaluation.playwright_target,
-            "vision_rubric": parent.evaluation.vision_rubric,
-        },
+        "evaluation": _module_evaluation_dict(parent, module_dir),
         "orchestration": {
             "mode": "linear",
             "max_retries_per_task": parent.orchestration.max_retries_per_task,

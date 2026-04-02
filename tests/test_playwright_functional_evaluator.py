@@ -217,7 +217,7 @@ class TestLlmQa:
         assert result.exit_code != 0
 
     def test_uses_correct_arg_order_for_brain_client(self, tmp_path: Path) -> None:
-        """brain_client_for_role must be called as (config.models, 'evaluator')."""
+        """brain_client_for_role must be called as (models dict, 'evaluator')."""
         from evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
         captured_calls: list[tuple] = []

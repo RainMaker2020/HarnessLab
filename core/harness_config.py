@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+
+# Roles whose *model id* can be overridden via HARNESS_MODEL_<ROLE> env vars.
+_MODEL_ROLE_KEYS = frozenset({"planner", "generator", "evaluator", "contract_verifier"})
+_ENV_MODEL_VARS: dict[str, str] = {
+    "planner": "HARNESS_MODEL_PLANNER",
+    "generator": "HARNESS_MODEL_GENERATOR",
+    "evaluator": "HARNESS_MODEL_EVALUATOR",
+    "contract_verifier": "HARNESS_MODEL_CONTRACT_VERIFIER",
+}
 
 from evaluator import DEFAULT_VISION_RUBRIC
 from exceptions import HarnessError
@@ -66,6 +76,8 @@ class EvaluationConfig:
     vision_rubric: str
     contract_test_command: Optional[str] = None
     planner_timeout_seconds: int = 900
+    # Optional path (relative to harness.yaml or absolute): appended to vision_rubric for harness_eval.
+    vision_rubric_supplement: Optional[Path] = None
 
 
 @dataclass
@@ -154,6 +166,10 @@ class HarnessConfig:
         return self.evaluation.vision_rubric
 
     @property
+    def vision_rubric_supplement(self) -> Optional[Path]:
+        return self.evaluation.vision_rubric_supplement
+
+    @property
     def contract_test_command(self) -> Optional[str]:
         return self.evaluation.contract_test_command
 
@@ -203,11 +219,24 @@ class HarnessConfig:
 
     @property
     def effective_models(self) -> dict[str, str]:
-        """Returns models dict; flattens all roles to generator when single_model_mode is active."""
+        """YAML ``models`` plus ablation flatten and per-role env overrides.
+
+        ``HARNESS_MODEL_PLANNER``, ``HARNESS_MODEL_GENERATOR``,
+        ``HARNESS_MODEL_EVALUATOR``, ``HARNESS_MODEL_CONTRACT_VERIFIER`` override
+        the corresponding model id when set (after ``single_model_mode`` flatten).
+        Non-role keys (e.g. ``evaluator_provider``) are preserved from YAML.
+        """
+        base = dict(self.models)
         if self.ablation.single_model_mode:
-            generator = self.models.get("generator", "claude-sonnet-4-6")
-            return {role: generator for role in self.models}
-        return dict(self.models)
+            generator = base.get("generator", "claude-sonnet-4-6")
+            for key in list(base.keys()):
+                if key in _MODEL_ROLE_KEYS:
+                    base[key] = generator
+        for role, env_key in _ENV_MODEL_VARS.items():
+            val = os.environ.get(env_key)
+            if val is not None and str(val).strip():
+                base[role] = str(val).strip()
+        return base
 
     @property
     def contract_negotiation_max_retries(self) -> int:
@@ -370,6 +399,11 @@ class HarnessConfig:
         elif ct_cmd is not None:
             ct_cmd = str(ct_cmd).strip()
 
+        vrs_raw = merged.get("vision_rubric_supplement")
+        vrs_path: Optional[Path] = None
+        if vrs_raw is not None and str(vrs_raw).strip():
+            vrs_path = _resolve(base, str(vrs_raw).strip())
+
         evaluation = EvaluationConfig(
             strategy=eval_strategy,
             build_command=str(merged["build_command"]),
@@ -377,6 +411,7 @@ class HarnessConfig:
             vision_rubric=vision_rubric,
             contract_test_command=ct_cmd,
             planner_timeout_seconds=int(merged.get("planner_timeout_seconds") or 900),
+            vision_rubric_supplement=vrs_path,
         )
 
         orch_mode = str(merged.get("orchestration_mode") or "linear").strip().lower()
@@ -536,6 +571,8 @@ def _merge_raw(raw: dict[str, Any], base: Path) -> dict[str, Any]:
             out["playwright_target"] = evaluation["playwright_target"]
         if evaluation.get("vision_rubric") is not None:
             out["vision_rubric"] = evaluation["vision_rubric"]
+        if evaluation.get("vision_rubric_supplement") is not None:
+            out["vision_rubric_supplement"] = evaluation["vision_rubric_supplement"]
         if evaluation.get("contract_test_command") is not None:
             out["contract_test_command"] = evaluation["contract_test_command"]
         if evaluation.get("planner_timeout_seconds") is not None:
