@@ -8,16 +8,16 @@ import sys
 from pathlib import Path
 
 # Repo root = parent of core/
-_CORE = Path(__file__).resolve().parent
+_CORE = Path(__file__).resolve().parent.parent
 _REPO = _CORE.parent
 if str(_CORE) not in sys.path:
     sys.path.insert(0, str(_CORE))
 
-from env_bootstrap import load_harness_env
-from evaluator import PlaywrightVisualEvaluator, build_evaluator
-from exceptions import HarnessError
-from git_paths import git_changed_paths_relative_to_workspace
-from harness_config import HarnessConfig
+from harness.env_bootstrap import load_harness_env
+from harness.eval.evaluator import PlaywrightVisualEvaluator, build_evaluator
+from harness.exceptions import HarnessError
+from harness.git.git_paths import git_changed_paths_relative_to_workspace
+from harness.config.harness_config import HarnessConfig
 
 
 def main() -> None:

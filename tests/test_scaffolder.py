@@ -10,9 +10,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from exceptions import HarnessError
-from model_router import ModelRouter
-from scaffolder import (
+from harness.exceptions import HarnessError
+from harness.config.model_router import ModelRouter
+from harness.planning.scaffolder import (
     SCAFFOLDER_SYSTEM_PROMPT,
     Scaffolder,
     _BEGIN_ARCH,
@@ -88,7 +88,7 @@ def test_run_writes_files(tmp_path):
     proc.stdout = _sample_stdout()
     proc.stderr = ""
 
-    with patch("scaffolder.subprocess.run", return_value=proc) as mock_run:
+    with patch("harness.planning.scaffolder.subprocess.run", return_value=proc) as mock_run:
         Scaffolder(cfg, router).run("Build a thing", force=True)
 
     assert "# Arch" in arch.read_text()
@@ -124,7 +124,7 @@ def test_invoke_planner_nonzero_exit_raises(tmp_path):
     proc.stdout = ""
     proc.stderr = "boom"
 
-    with patch("scaffolder.subprocess.run", return_value=proc):
+    with patch("harness.planning.scaffolder.subprocess.run", return_value=proc):
         with pytest.raises(HarnessError, match="Scaffolder failed"):
             Scaffolder(cfg, router)._invoke_planner("x")
 
@@ -137,7 +137,7 @@ def test_invoke_planner_empty_stdout_raises(tmp_path):
     proc.stdout = "   "
     proc.stderr = ""
 
-    with patch("scaffolder.subprocess.run", return_value=proc):
+    with patch("harness.planning.scaffolder.subprocess.run", return_value=proc):
         with pytest.raises(HarnessError, match="empty output"):
             Scaffolder(cfg, router)._invoke_planner("x")
 
@@ -149,7 +149,7 @@ def test_invoke_planner_timeout_raises(tmp_path):
     def _timeout(*_a, **_k):
         raise subprocess.TimeoutExpired(cmd=["claude"], timeout=30)
 
-    with patch("scaffolder.subprocess.run", side_effect=_timeout):
+    with patch("harness.planning.scaffolder.subprocess.run", side_effect=_timeout):
         with pytest.raises(HarnessError, match="timed out"):
             Scaffolder(cfg, router)._invoke_planner("x")
 
@@ -158,7 +158,7 @@ def test_invoke_planner_missing_claude_raises(tmp_path):
     cfg = _minimal_cfg(tmp_path)
     router = ModelRouter(type("M", (), {"models": {"planner": "p"}})())
 
-    with patch("scaffolder.subprocess.run", side_effect=FileNotFoundError()):
+    with patch("harness.planning.scaffolder.subprocess.run", side_effect=FileNotFoundError()):
         with pytest.raises(HarnessError, match="claude CLI not found"):
             Scaffolder(cfg, router)._invoke_planner("x")
 
@@ -206,7 +206,7 @@ def test_run_proceeds_when_user_types_yes(tmp_path):
     proc.stdout = _sample_stdout()
     proc.stderr = ""
 
-    with patch("scaffolder.subprocess.run", return_value=proc):
+    with patch("harness.planning.scaffolder.subprocess.run", return_value=proc):
         Scaffolder(cfg, router).run("idea", force=False, stdin=StringIO("yes\n"))
 
     assert "# Arch" in arch.read_text()

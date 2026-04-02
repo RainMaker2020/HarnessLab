@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from exceptions import HarnessError
+from harness.exceptions import HarnessError
 
 
 class DockerManager:

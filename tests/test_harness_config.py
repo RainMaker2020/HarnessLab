@@ -8,8 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from exceptions import HarnessError
-from harness_config import HarnessConfig
+from harness.exceptions import HarnessError
+from harness.config.harness_config import HarnessConfig
 
 
 def _write_docs(root: Path) -> None:

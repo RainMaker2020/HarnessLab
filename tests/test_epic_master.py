@@ -11,9 +11,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from exceptions import HarnessError
-from harness_config import HarnessConfig
-from master_orchestrator import (
+from harness.exceptions import HarnessError
+from harness.config.harness_config import HarnessConfig
+from harness.planning.master_orchestrator import (
     EpicModule,
     EpicParser,
     interface_body_for_module,
@@ -238,7 +238,7 @@ def test_master_provisions_module_and_skips_sub_run(tmp_path: Path) -> None:
     )
 
     cfg = HarnessConfig.from_yaml(y)
-    from master_orchestrator import MasterOrchestrator
+    from harness.planning.master_orchestrator import MasterOrchestrator
 
     def _fake_claude(module_dir, ui):
         return subprocess.CompletedProcess(
@@ -248,7 +248,7 @@ def test_master_provisions_module_and_skips_sub_run(tmp_path: Path) -> None:
             stderr="",
         )
 
-    with patch("master_orchestrator.run_module_claude", side_effect=_fake_claude):
+    with patch("harness.planning.master_orchestrator.run_module_claude", side_effect=_fake_claude):
         master = MasterOrchestrator(cfg, ui=ObservationDeckShim())
         master.run()
 

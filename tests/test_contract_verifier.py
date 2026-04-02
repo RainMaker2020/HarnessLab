@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from evaluator import ContractVerifier
+from harness.eval.evaluator import ContractVerifier
 
 
 class _Cfg:
@@ -27,7 +27,7 @@ def test_verify_contract_passes_on_final_line_approve(tmp_path):
     mock_client = MagicMock()
     mock_client.complete_text.return_value = "Looks good.\nAPPROVE"
 
-    with patch("evaluator.brain_client_for_role", return_value=mock_client):
+    with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
         result = ContractVerifier(cfg).verify_contract("TASK_01", "Do X", ct)
 
     assert result.passed is True
@@ -45,7 +45,7 @@ def test_verify_contract_fails_on_final_line_reject(tmp_path):
     mock_client = MagicMock()
     mock_client.complete_text.return_value = "Gaps found.\nREJECT"
 
-    with patch("evaluator.brain_client_for_role", return_value=mock_client):
+    with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
         result = ContractVerifier(cfg).verify_contract("TASK_01", "Do X", ct)
 
     assert result.passed is False
@@ -65,7 +65,7 @@ def test_verify_contract_no_substring_reject_false_positive(tmp_path):
         "Earlier I considered REJECT but changed my mind.\nAPPROVE"
     )
 
-    with patch("evaluator.brain_client_for_role", return_value=mock_client):
+    with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
         result = ContractVerifier(cfg).verify_contract("TASK_01", "Do X", ct)
 
     assert result.passed is True

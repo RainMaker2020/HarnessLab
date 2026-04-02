@@ -6,7 +6,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from exceptions import HarnessError
+from harness.exceptions import HarnessError
 
 
 class ContractPlanner:

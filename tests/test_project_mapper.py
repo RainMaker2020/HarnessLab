@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from project_mapper import (
+from harness.prompts.project_mapper import (
     ProjectMapper,
     PROJECT_MAP_LINE_THRESHOLD,
     count_project_map_lines,
@@ -59,8 +59,8 @@ def test_direct_files_from_task_and_impacted(tmp_path: Path) -> None:
 
 
 def test_prompt_situational_injection(tmp_path: Path) -> None:
-    from prompt_generator import PromptGenerator
-    from project_mapper import SituationalContext
+    from harness.prompts.prompt_generator import PromptGenerator
+    from harness.prompts.project_mapper import SituationalContext
 
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -108,8 +108,8 @@ def test_prompt_situational_injection(tmp_path: Path) -> None:
 
 def test_prompt_injects_full_map_when_plan_file_missing(tmp_path: Path) -> None:
     """Small map: full JSON even if config has no ``plan_file`` (pruning not needed)."""
-    from prompt_generator import PromptGenerator
-    from project_mapper import SituationalContext
+    from harness.prompts.prompt_generator import PromptGenerator
+    from harness.prompts.project_mapper import SituationalContext
 
     ws = tmp_path / "ws2"
     ws.mkdir()
@@ -233,8 +233,8 @@ def test_pruning_large_map_stays_under_token_budget(tmp_path: Path) -> None:
 
 
 def test_prompt_injects_pruned_header_when_map_exceeds_threshold(tmp_path: Path) -> None:
-    from prompt_generator import PromptGenerator
-    from project_mapper import SituationalContext
+    from harness.prompts.prompt_generator import PromptGenerator
+    from harness.prompts.project_mapper import SituationalContext
 
     ws = tmp_path / "ws"
     ws.mkdir()

@@ -24,5 +24,6 @@ def load_harness_env() -> None:
     except ImportError:  # pragma: no cover
         return
 
-    repo_root = Path(__file__).resolve().parent.parent
+    # core/harness/env_bootstrap.py → repo root is three levels up
+    repo_root = Path(__file__).resolve().parent.parent.parent
     load_dotenv(dotenv_path=repo_root / ".env", override=False)

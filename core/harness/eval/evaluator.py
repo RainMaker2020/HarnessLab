@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from llm_provider import brain_client_for_role
+from harness.llm.llm_provider import brain_client_for_role
 
 
 def _brain_models_for_config(config: Any) -> dict[str, str]:
@@ -716,7 +716,7 @@ class PlaywrightFunctionalEvaluator(BaseEvaluator):
 
 def build_evaluator(config: Any) -> BaseEvaluator:
     """Factory: return the correct BaseEvaluator implementation from harness.yaml config."""
-    from exceptions import HarnessError
+    from harness.exceptions import HarnessError
 
     evaluator_map = {
         "exit_code": ExitCodeEvaluator,

@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from model_router import ModelRouter, ModelRoleResolution
+from harness.config.model_router import ModelRouter, ModelRoleResolution
 
 
 def test_resolve_generator_has_no_brain_provider():

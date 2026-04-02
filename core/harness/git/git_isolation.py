@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from exceptions import HarnessError
+from harness.exceptions import HarnessError
 
 
 def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess:

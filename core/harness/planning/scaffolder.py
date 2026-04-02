@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Optional, TextIO
 
-from exceptions import HarnessError
+from harness.exceptions import HarnessError
 
 SCAFFOLDER_SYSTEM_PROMPT = (
     "You are the Senior Architect for HarnessLab. Your goal is to translate a vague human idea "

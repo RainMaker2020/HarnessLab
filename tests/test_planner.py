@@ -9,9 +9,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from exceptions import HarnessError
-from model_router import ModelRouter
-from planner import ContractPlanner
+from harness.exceptions import HarnessError
+from harness.config.model_router import ModelRouter
+from harness.planning.planner import ContractPlanner
 
 
 class _Cfg:
@@ -52,7 +52,7 @@ def test_generate_contract_writes_file(tmp_ws):
     proc.stdout = "import { expect, test } from 'vitest';\ntest('a', () => expect(1).toBe(1));"
     proc.stderr = ""
 
-    with patch("planner.subprocess.run", return_value=proc) as mock_run:
+    with patch("harness.planning.planner.subprocess.run", return_value=proc) as mock_run:
         planner = ContractPlanner(cfg, router)
         path = planner.generate_contract("TASK_01", "Do the thing")
 
@@ -71,5 +71,5 @@ def test_generate_contract_claude_failure_raises(tmp_ws):
     proc.stdout = ""
     proc.stderr = "boom"
 
-    with patch("planner.subprocess.run", return_value=proc), pytest.raises(HarnessError, match="Contract planner"):
+    with patch("harness.planning.planner.subprocess.run", return_value=proc), pytest.raises(HarnessError, match="Contract planner"):
         ContractPlanner(cfg, router).generate_contract("TASK_01", "x")

@@ -12,13 +12,13 @@ _REPO_ROOT = Path(__file__).resolve().parent
 _CORE = _REPO_ROOT / "core"
 sys.path.insert(0, str(_CORE))
 
-from env_bootstrap import load_harness_env
-from exceptions import HarnessError
-from harness_config import HarnessConfig
-from model_router import ModelRouter
-from scaffolder import Scaffolder
-from trajectory_logger import TrajectoryLogger
-from ui import ObservationDeck
+from harness.env_bootstrap import load_harness_env
+from harness.exceptions import HarnessError
+from harness.config.harness_config import HarnessConfig
+from harness.config.model_router import ModelRouter
+from harness.planning.scaffolder import Scaffolder
+from harness.runtime.trajectory_logger import TrajectoryLogger
+from harness.runtime.ui import ObservationDeck
 
 
 def _git_diff(workspace: Path) -> str:

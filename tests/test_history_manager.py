@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from harness_plan import HistoryManager
+from harness.planning.harness_plan import HistoryManager
 
 
 @pytest.fixture

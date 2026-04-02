@@ -18,8 +18,8 @@ _ENV_MODEL_VARS: dict[str, str] = {
     "contract_verifier": "HARNESS_MODEL_CONTRACT_VERIFIER",
 }
 
-from evaluator import DEFAULT_VISION_RUBRIC
-from exceptions import HarnessError
+from harness.eval.evaluator import DEFAULT_VISION_RUBRIC
+from harness.exceptions import HarnessError
 
 
 def _resolve(base: Path, value: str | Path | None) -> Optional[Path]:

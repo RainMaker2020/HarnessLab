@@ -11,9 +11,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from evaluator import EvalResult  # noqa: E402
-from exceptions import HarnessError  # noqa: E402
-from harness_config import HarnessConfig  # noqa: E402
+from harness.eval.evaluator import EvalResult  # noqa: E402
+from harness.exceptions import HarnessError  # noqa: E402
+from harness.config.harness_config import HarnessConfig  # noqa: E402
 import mcp_server  # noqa: E402
 
 
@@ -82,12 +82,12 @@ def test_harness_eval_text_uses_verdict(tmp_path: Path) -> None:
     cfg = HarnessConfig.from_yaml(yml)
 
     fake = EvalResult(passed=True, output="ok\nAPPROVE", exit_code=0)
-    with patch.object(mcp_server, "run_playwright_eval", return_value=fake):
+    with patch("harness.mcp_server.run_playwright_eval", return_value=fake):
         text = mcp_server.harness_eval_text(cfg, "TASK_01")
     assert "VERDICT: APPROVE" in text
 
     fake_fail = EvalResult(passed=False, output="bad\nREJECT", exit_code=1)
-    with patch.object(mcp_server, "run_playwright_eval", return_value=fake_fail):
+    with patch("harness.mcp_server.run_playwright_eval", return_value=fake_fail):
         text = mcp_server.harness_eval_text(cfg, "TASK_01")
     assert "VERDICT: REJECT" in text
 
@@ -97,7 +97,7 @@ def test_harness_eval_text_task_mismatch(tmp_path: Path) -> None:
     cfg = HarnessConfig.from_yaml(yml)
     out = mcp_server.harness_eval_text(cfg, "TASK_99")
     assert "mismatch" in out.lower()
-    with patch.object(mcp_server, "run_playwright_eval") as mock_eval:
+    with patch("harness.mcp_server.run_playwright_eval") as mock_eval:
         mcp_server.harness_eval_text(cfg, "TASK_99")
     mock_eval.assert_not_called()
 
@@ -121,7 +121,7 @@ def test_harness_commit_blocks_when_eval_fails(tmp_path: Path) -> None:
     yml = _write_minimal_harness(tmp_path)
     cfg = HarnessConfig.from_yaml(yml)
     fake = EvalResult(passed=False, output="REJECT", exit_code=1)
-    with patch.object(mcp_server, "run_playwright_eval", return_value=fake):
+    with patch("harness.mcp_server.run_playwright_eval", return_value=fake):
         out = mcp_server.harness_commit_impl(cfg, "TASK_01", "msg", tmp_path)
     assert "blocked" in out.lower()
     assert "VERDICT: REJECT" in out
@@ -155,7 +155,7 @@ def test_harness_commit_succeeds_after_passing_eval(tmp_path: Path) -> None:
     (tmp_path / "ws" / "after_init.txt").write_text("staged-by-harness", encoding="utf-8")
 
     fake = EvalResult(passed=True, output="ok\nAPPROVE", exit_code=0)
-    with patch.object(mcp_server, "run_playwright_eval", return_value=fake):
+    with patch("harness.mcp_server.run_playwright_eval", return_value=fake):
         out = mcp_server.harness_commit_impl(cfg, "TASK_01", "task commit", tmp_path)
     assert "Committed TASK_01" in out
     assert "task commit" in out or "Committed" in out

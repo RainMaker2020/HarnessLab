@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from exceptions import HarnessError
-from harness_config import HarnessConfig
+from harness.exceptions import HarnessError
+from harness.config.harness_config import HarnessConfig
 
 
 @dataclass

@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from evaluator import (
+from harness.eval.evaluator import (
     BaseEvaluator,
     EvalResult,
     ExitCodeEvaluator,
@@ -51,7 +51,7 @@ class FakeConfig:
 def test_evalresult_passed_on_exit_zero():
     config = FakeConfig()
     evaluator = ExitCodeEvaluator(config)
-    with patch("evaluator.subprocess.run") as mock_run:
+    with patch("harness.eval.evaluator.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="ok\n", stderr="")
         result = evaluator.run()
     assert result.passed is True
@@ -62,7 +62,7 @@ def test_evalresult_passed_on_exit_zero():
 def test_evalresult_failed_on_nonzero_exit():
     config = FakeConfig()
     evaluator = ExitCodeEvaluator(config)
-    with patch("evaluator.subprocess.run") as mock_run:
+    with patch("harness.eval.evaluator.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="build failed")
         result = evaluator.run()
     assert result.passed is False
@@ -73,7 +73,7 @@ def test_evalresult_failed_on_nonzero_exit():
 def test_evalresult_captures_both_stdout_and_stderr():
     config = FakeConfig()
     evaluator = ExitCodeEvaluator(config)
-    with patch("evaluator.subprocess.run") as mock_run:
+    with patch("harness.eval.evaluator.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="compiled\n", stderr="warning: unused var")
         result = evaluator.run()
     assert "compiled" in result.output
@@ -146,7 +146,7 @@ def test_take_screenshot_returns_failure_when_sync_playwright_is_none(tmp_path):
     target = tmp_path / "index.html"
     target.write_text("<html><body>Hello</body></html>")
 
-    with patch("evaluator.sync_playwright", None):
+    with patch("harness.eval.evaluator.sync_playwright", None):
         result = ev._take_screenshot(
             target=target,
             screenshot_path=tmp_path / ".harness_screenshot.png",
@@ -174,7 +174,7 @@ def test_take_screenshot_succeeds_with_mocked_playwright(tmp_path):
     mock_context_manager.__enter__ = MagicMock(return_value=mock_p)
     mock_context_manager.__exit__ = MagicMock(return_value=False)
 
-    with patch("evaluator.sync_playwright", return_value=mock_context_manager):
+    with patch("harness.eval.evaluator.sync_playwright", return_value=mock_context_manager):
         # simulate screenshot writing the file
         screenshot_path.write_bytes(b"fakepng")
         result = ev._take_screenshot(target=target, screenshot_path=screenshot_path)
@@ -196,7 +196,7 @@ def test_vision_returns_pass_when_response_has_no_reject(tmp_path):
     mock_client = MagicMock()
     mock_client.complete_text_with_vision_png.return_value = "Score: 9/10. Clean layout. APPROVE"
 
-    with patch("evaluator.brain_client_for_role", return_value=mock_client):
+    with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
         result = ev._evaluate_with_vision(screenshot)
 
     assert result.passed is True
@@ -213,7 +213,7 @@ def test_vision_returns_fail_when_response_contains_reject(tmp_path):
     mock_client = MagicMock()
     mock_client.complete_text_with_vision_png.return_value = "Score: 4/10. Boring AI slop. REJECT"
 
-    with patch("evaluator.brain_client_for_role", return_value=mock_client):
+    with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
         result = ev._evaluate_with_vision(screenshot)
 
     assert result.passed is False
@@ -230,7 +230,7 @@ def test_vision_reject_check_is_case_insensitive(tmp_path):
     mock_client = MagicMock()
     mock_client.complete_text_with_vision_png.return_value = "Score: 3/10.\nreject"
 
-    with patch("evaluator.brain_client_for_role", return_value=mock_client):
+    with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
         result = ev._evaluate_with_vision(screenshot)
 
     assert result.passed is False
@@ -248,7 +248,7 @@ def test_vision_handles_auth_error_gracefully(tmp_path):
     mock_client = MagicMock()
     mock_client.complete_text_with_vision_png.side_effect = AuthenticationError("Invalid API key")
 
-    with patch("evaluator.brain_client_for_role", return_value=mock_client):
+    with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
         result = ev._evaluate_with_vision(screenshot)
 
     assert result.passed is False
@@ -269,7 +269,7 @@ def test_vision_evaluator_openai_provider_uses_factory_client(tmp_path):
     mock_client = MagicMock()
     mock_client.complete_text_with_vision_png.return_value = "Looks good.\nAPPROVE"
 
-    with patch("llm_provider.LLMProviderFactory.create", return_value=mock_client):
+    with patch("harness.llm.llm_provider.LLMProviderFactory.create", return_value=mock_client):
         result = ev._evaluate_with_vision(screenshot)
 
     assert result.passed is True
@@ -326,7 +326,7 @@ def test_exit_code_cross_file_regression_flags_downstream_file(tmp_path: Path):
         "TypeError: cannot read property 'x' of undefined\n"
         "    at foo (b.ts:10:5)\n"
     )
-    with patch("evaluator.subprocess.run") as mock_run:
+    with patch("harness.eval.evaluator.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stdout=combined, stderr="")
         result = ev.run(edited_paths=["a.ts"])
 

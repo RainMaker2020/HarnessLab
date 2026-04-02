@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from llm_provider import (
+from harness.llm.llm_provider import (
     LLMProviderFactory,
     VisionBridge,
     _chat_completions_create_with_token_budget,
@@ -46,7 +46,7 @@ def test_brain_client_for_role_passes_base_url(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_COMPATIBLE_API_KEY", raising=False)
-    with patch("llm_provider.OpenAILLMClient") as mock_cls:
+    with patch("harness.llm.llm_provider.OpenAILLMClient") as mock_cls:
         brain_client_for_role(
             {
                 "evaluator": "x",
@@ -63,7 +63,7 @@ def test_brain_client_for_role_passes_base_url(monkeypatch):
 
 def test_factory_passes_deepseek_api_key_from_env(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
-    with patch("llm_provider.OpenAILLMClient") as mock_cls:
+    with patch("harness.llm.llm_provider.OpenAILLMClient") as mock_cls:
         LLMProviderFactory.create(
             "openai-compatible",
             base_url="https://api.deepseek.com",
@@ -76,7 +76,7 @@ def test_factory_passes_deepseek_api_key_from_env(monkeypatch):
 
 def test_factory_openai_passes_openai_api_key_from_env(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
-    with patch("llm_provider.OpenAILLMClient") as mock_cls:
+    with patch("harness.llm.llm_provider.OpenAILLMClient") as mock_cls:
         LLMProviderFactory.create("openai", base_url=None)
     mock_cls.assert_called_once_with(base_url=None, api_key="sk-openai-test")
 
@@ -86,7 +86,7 @@ def test_factory_passes_openai_compatible_api_key_for_non_deepseek_host(monkeypa
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "sk-groq-or-local")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-fallback")
-    with patch("llm_provider.OpenAILLMClient") as mock_cls:
+    with patch("harness.llm.llm_provider.OpenAILLMClient") as mock_cls:
         LLMProviderFactory.create("openai-compatible", base_url="https://api.groq.com/openai/v1")
     mock_cls.assert_called_once_with(
         base_url="https://api.groq.com/openai/v1",
@@ -96,9 +96,9 @@ def test_factory_passes_openai_compatible_api_key_for_non_deepseek_host(monkeypa
 
 def test_anthropic_client_passes_explicit_api_key_when_set(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-explicit")
-    with patch("llm_provider.anthropic") as mock_anthropic:
+    with patch("harness.llm.llm_provider.anthropic") as mock_anthropic:
         mock_anthropic.Anthropic.return_value = MagicMock()
-        from llm_provider import AnthropicLLMClient
+        from harness.llm.llm_provider import AnthropicLLMClient
 
         AnthropicLLMClient()
     mock_anthropic.Anthropic.assert_called_once_with(api_key="sk-ant-explicit")
@@ -106,9 +106,9 @@ def test_anthropic_client_passes_explicit_api_key_when_set(monkeypatch):
 
 def test_anthropic_client_omits_api_key_kwarg_when_unset(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    with patch("llm_provider.anthropic") as mock_anthropic:
+    with patch("harness.llm.llm_provider.anthropic") as mock_anthropic:
         mock_anthropic.Anthropic.return_value = MagicMock()
-        from llm_provider import AnthropicLLMClient
+        from harness.llm.llm_provider import AnthropicLLMClient
 
         AnthropicLLMClient()
     mock_anthropic.Anthropic.assert_called_once_with()

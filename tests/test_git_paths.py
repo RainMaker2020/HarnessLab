@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from git_paths import git_changed_paths_relative_to_workspace  # noqa: E402
+from harness.git.git_paths import git_changed_paths_relative_to_workspace  # noqa: E402
 
 
 def _git_init_with_commit(repo: Path) -> None:

@@ -13,10 +13,10 @@ from typing import Any, Optional
 
 import yaml
 
-from exceptions import HarnessError
-from git_isolation import provision_subrepo_workspace, provision_worktree_workspace
-from harness_config import HarnessConfig
-from ui import ObservationDeck
+from harness.exceptions import HarnessError
+from harness.git.git_isolation import provision_subrepo_workspace, provision_worktree_workspace
+from harness.config.harness_config import HarnessConfig
+from harness.runtime.ui import ObservationDeck
 
 CLAUDE_MODULE_PROMPT = "Execute the PLAN.md in this module."
 

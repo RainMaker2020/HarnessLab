@@ -9,8 +9,8 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "core"))
 
-from env_bootstrap import load_harness_env  # noqa: E402
-from mcp_server import (  # noqa: E402
+from harness.env_bootstrap import load_harness_env  # noqa: E402
+from harness.mcp_server import (  # noqa: E402
     _load_config,
     harness_next_task_text,
     harness_progress_text,

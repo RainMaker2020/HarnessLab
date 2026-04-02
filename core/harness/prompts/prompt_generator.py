@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from project_mapper import (
+from harness.prompts.project_mapper import (
     PROJECT_MAP_LINE_THRESHOLD,
     dependency_pruning,
     dumps_project_map_deterministic,
@@ -16,9 +16,9 @@ from project_mapper import (
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from project_mapper import SituationalContext
+    from harness.prompts.project_mapper import SituationalContext
 
-from wisdom_rag import format_wisdom_block
+from harness.prompts.wisdom_rag import format_wisdom_block
 
 
 def _dependency_graph_markdown(

@@ -7,18 +7,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Repo layout: core/ is on sys.path for harness modules (same pattern as evaluator_cli).
-_CORE = Path(__file__).resolve().parent
+# Repo layout: parent of `harness/` (i.e. core/) must be on sys.path.
+_CORE = Path(__file__).resolve().parent.parent
 _REPO = _CORE.parent
 if str(_CORE) not in sys.path:
     sys.path.insert(0, str(_CORE))
 
-from env_bootstrap import load_harness_env
-from evaluator import EvalResult, PlaywrightVisualEvaluator
-from exceptions import HarnessError
-from git_paths import git_changed_paths_relative_to_workspace
-from harness_config import HarnessConfig
-from harness_plan import PlanParser
+from harness.env_bootstrap import load_harness_env
+from harness.eval.evaluator import EvalResult, PlaywrightVisualEvaluator
+from harness.exceptions import HarnessError
+from harness.git.git_paths import git_changed_paths_relative_to_workspace
+from harness.config.harness_config import HarnessConfig
+from harness.planning.harness_plan import PlanParser
 
 try:
     from mcp.server.fastmcp import FastMCP
