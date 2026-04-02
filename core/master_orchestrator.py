@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -13,19 +14,38 @@ from typing import Any, Optional
 import yaml
 
 from exceptions import HarnessError
-from evaluator import build_evaluator
 from git_isolation import provision_subrepo_workspace, provision_worktree_workspace
 from harness_config import HarnessConfig
 from ui import ObservationDeck
 
+CLAUDE_MODULE_PROMPT = "Execute the PLAN.md in this module."
 
-def orchestrator_class_from_main() -> type:
-    """Phase 2: the Python SubOrchestrator loop was removed; tests patch this to inject a stub."""
-    raise HarnessError(
-        "The Python SubOrchestrator loop was removed in Phase 2 (agentic-native). "
-        "Use Claude Code with /harness-run in each module workspace. "
-        "Tests may patch `master_orchestrator.orchestrator_class_from_main`."
-    )
+
+def run_module_claude(module_dir: Path, ui: ObservationDeck) -> subprocess.CompletedProcess:
+    """Run a non-interactive Claude Code session in ``module_dir`` (EPIC sub-workspace)."""
+    module_dir = module_dir.resolve()
+    try:
+        proc = subprocess.run(
+            ["claude", "-p", CLAUDE_MODULE_PROMPT],
+            cwd=str(module_dir),
+            capture_output=True,
+            text=True,
+            timeout=3600,
+        )
+    except FileNotFoundError as exc:
+        raise HarnessError(
+            "Claude CLI not found on PATH. Install: npm install -g @anthropic-ai/claude-code"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HarnessError("Claude session exceeded 3600s timeout.") from exc
+
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()[-2000:]
+        raise HarnessError(
+            f"Claude module run failed (exit {proc.returncode}) in {module_dir}.\n{err}"
+        )
+    ui.info(f"[MasterOrchestrator] Claude completed for {module_dir.name}")
+    return proc
 
 
 @dataclass
@@ -238,7 +258,7 @@ def write_sub_harness_yaml(module_dir: Path, parent: HarnessConfig) -> None:
 
 
 class MasterOrchestrator:
-    """Epic coordinator: EPIC.md → isolated dirs → Orchestrator from main.py (same class as linear)."""
+    """Epic coordinator: EPIC.md → isolated module dirs → ``claude -p`` in each module directory."""
 
     def __init__(self, config: HarnessConfig, ui: ObservationDeck) -> None:
         self.config = config
@@ -251,7 +271,6 @@ class MasterOrchestrator:
         self.interfaces_path = config.interfaces_path.resolve()
         self.modules_root = (config.workspace_dir / "modules").resolve()
         self._project_root = self.config.spec_doc.resolve().parent
-        self._orchestrator_class = orchestrator_class_from_main
 
     def run(self) -> None:
         """Process every unchecked EPIC module until EPIC.md is complete."""
@@ -282,11 +301,7 @@ class MasterOrchestrator:
 
             write_sub_harness_yaml(module_dir, self.config)
 
-            sub_cfg = HarnessConfig.sub_workspace_config(self.config, module_dir)
-            evaluator = build_evaluator(sub_cfg)
-            Orchestrator = self._orchestrator_class()
-            orchestrator = Orchestrator(config=sub_cfg, evaluator=evaluator, ui=self.ui)
-            orchestrator.run()
+            run_module_claude(module_dir, self.ui)
 
             parser.mark_done(module)
             self.ui.epic_module_complete(module.module_id, module.title)

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -393,3 +394,68 @@ class TestAblationStudyOutputs:
         labels = [s["label"] for s in ABLATION_MATRIX]
         assert any("Baseline" in l for l in labels)
         assert any("WisdomRAG" in l or "wisdom" in l.lower() for l in labels)
+
+
+# ---------------------------------------------------------------------------
+# run_harness — Claude ablation (no core/main.py)
+# ---------------------------------------------------------------------------
+
+class TestRunHarnessPhase2:
+    def test_run_harness_invokes_claude_not_main_py(self, tmp_path: Path) -> None:
+        """Ablation must call Claude in the workspace, never deleted core/main.py."""
+        import ablation_study
+
+        ws = tmp_path / "workspace"
+        ws.mkdir(parents=True)
+        cfg = {"paths": {"workspace_dir": str(ws)}}
+
+        def _fake_run(cmd, **kwargs):
+            assert cmd[0] == "claude"
+            assert "main.py" not in " ".join(cmd)
+            return CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with patch.object(ablation_study.subprocess, "run", side_effect=_fake_run):
+            r = ablation_study.run_harness(cfg, str(tmp_path / "PLAN.md"), repo_root=tmp_path)
+        assert not r.error
+        assert r.tasks_total == 1
+
+    def test_run_harness_aggregates_existing_jsonl(self, tmp_path: Path) -> None:
+        import ablation_study
+
+        traj = tmp_path / "traj.jsonl"
+        traj.write_text(
+            json.dumps({"task_id": "TASK_01", "attempts": 2}) + "\n"
+            + json.dumps({"task_id": "TASK_02", "attempts": 1}) + "\n",
+            encoding="utf-8",
+        )
+        ws = tmp_path / "workspace"
+        ws.mkdir(parents=True)
+        cfg = {"paths": {"workspace_dir": str(ws), "distillation_export": str(traj)}}
+
+        with patch.object(
+            ablation_study.subprocess,
+            "run",
+            return_value=CompletedProcess(["claude"], 0, "", ""),
+        ):
+            r = ablation_study.run_harness(cfg, str(tmp_path / "PLAN.md"), repo_root=tmp_path)
+        assert r.tasks_total == 2
+        assert r.tasks_first_attempt == 1
+        assert r.total_retries == 1
+        assert not r.error
+
+    def test_run_harness_defaults_metrics_when_no_jsonl(self, tmp_path: Path) -> None:
+        import ablation_study
+
+        ws = tmp_path / "workspace"
+        ws.mkdir(parents=True)
+        cfg = {"paths": {"workspace_dir": str(ws), "distillation_export": str(tmp_path / "nope.jsonl")}}
+
+        with patch.object(
+            ablation_study.subprocess,
+            "run",
+            return_value=CompletedProcess(["claude"], 0, "", ""),
+        ):
+            r = ablation_study.run_harness(cfg, str(tmp_path / "PLAN.md"), repo_root=tmp_path)
+        assert r.tasks_total == 1
+        assert r.tasks_first_attempt == 1
+        assert not r.error

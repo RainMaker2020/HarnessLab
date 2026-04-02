@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 core/hooks/post_write_gate.py"
+            "command": ".venv/bin/python core/hooks/post_write_gate.py"
           }
         ]
       }

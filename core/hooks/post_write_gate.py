@@ -14,27 +14,90 @@ try:
 except ImportError:
     yaml = None  # type: ignore[assignment]
 
-
+# Tests may point at a synthetic repo root (must be set before import in tests).
 def _repo_root() -> Path:
+    override = os.environ.get("HARNESS_POST_WRITE_GATE_ROOT")
+    if override:
+        return Path(override).resolve()
     return Path(__file__).resolve().parent.parent.parent
 
 
-def _workspace_dir_from_harness(repo: Path) -> Path | None:
-    if yaml is None:
-        return None
+def _workspace_dir_from_harness_plaintext(repo: Path) -> Path | None:
+    """Parse workspace_dir without PyYAML (best-effort line scan)."""
     cfg_path = repo / "harness.yaml"
     if not cfg_path.exists():
         return None
     try:
-        cfg = yaml.safe_load(cfg_path.read_text())
-    except Exception:
+        lines = cfg_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
         return None
-    paths = cfg.get("paths") or {}
-    wd = paths.get("workspace_dir") or cfg.get("workspace_dir")
-    if not wd:
+    for line in lines:
+        if "workspace_dir" in line and ":" in line:
+            raw = line.split(":", 1)[1].strip().strip('"').strip("'")
+            if raw:
+                p = Path(raw)
+                return p.resolve() if p.is_absolute() else (repo / p).resolve()
+    return None
+
+
+def _build_command_from_harness_plaintext(repo: Path) -> str | None:
+    """Parse build_command without PyYAML (best-effort line scan)."""
+    cfg_path = repo / "harness.yaml"
+    if not cfg_path.exists():
         return None
-    p = Path(wd)
-    return p.resolve() if p.is_absolute() else (repo / p).resolve()
+    try:
+        lines = cfg_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if "build_command" in line and ":" in line:
+            raw = line.split(":", 1)[1].strip()
+            if raw.startswith('"') and raw.endswith('"'):
+                raw = raw[1:-1]
+            elif raw.startswith("'") and raw.endswith("'"):
+                raw = raw[1:-1]
+            if raw:
+                return raw
+    return None
+
+
+def _workspace_dir_from_harness(repo: Path) -> Path | None:
+    if yaml is not None:
+        cfg_path = repo / "harness.yaml"
+        if not cfg_path.exists():
+            return None
+        try:
+            cfg = yaml.safe_load(cfg_path.read_text())
+        except Exception:
+            return _workspace_dir_from_harness_plaintext(repo)
+        if not isinstance(cfg, dict):
+            return _workspace_dir_from_harness_plaintext(repo)
+        paths = cfg.get("paths") or {}
+        wd = paths.get("workspace_dir") or cfg.get("workspace_dir")
+        if not wd:
+            return _workspace_dir_from_harness_plaintext(repo)
+        p = Path(wd)
+        return p.resolve() if p.is_absolute() else (repo / p).resolve()
+    return _workspace_dir_from_harness_plaintext(repo)
+
+
+def _build_command_from_harness(repo: Path) -> str | None:
+    if yaml is not None:
+        cfg_path = repo / "harness.yaml"
+        if not cfg_path.exists():
+            return None
+        try:
+            cfg = yaml.safe_load(cfg_path.read_text())
+        except Exception:
+            return _build_command_from_harness_plaintext(repo)
+        if not isinstance(cfg, dict):
+            return _build_command_from_harness_plaintext(repo)
+        eval_section = cfg.get("evaluation") or {}
+        build_cmd = eval_section.get("build_command") or cfg.get("build_command")
+        if build_cmd:
+            return str(build_cmd).strip()
+        return _build_command_from_harness_plaintext(repo)
+    return _build_command_from_harness_plaintext(repo)
 
 
 def _path_is_under_workspace(repo: Path, written: str, workspace_abs: Path) -> bool:
@@ -72,16 +135,8 @@ else:
     if not _path_is_under_workspace(repo, path, ws):
         sys.exit(0)
 
-# Read build command from harness.yaml
-try:
-    if yaml is None:
-        sys.exit(0)
-    cfg = yaml.safe_load((repo / "harness.yaml").read_text())
-    eval_section = cfg.get("evaluation") or {}
-    build_cmd = eval_section.get("build_command") or cfg.get("build_command")
-    if not build_cmd:
-        sys.exit(0)
-except Exception:
+build_cmd = _build_command_from_harness(repo)
+if not build_cmd:
     sys.exit(0)
 
 # Skip placeholder

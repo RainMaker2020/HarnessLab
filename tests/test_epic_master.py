@@ -1,6 +1,7 @@
 """Tests for EPIC parsing, interface blocks, and recursive harness validation."""
 
 import json
+import subprocess
 import textwrap
 import sys
 from pathlib import Path
@@ -239,17 +240,15 @@ def test_master_provisions_module_and_skips_sub_run(tmp_path: Path) -> None:
     cfg = HarnessConfig.from_yaml(y)
     from master_orchestrator import MasterOrchestrator
 
-    class _StubOrchestrator:
-        def __init__(self, *args, **kwargs):
-            pass
+    def _fake_claude(module_dir, ui):
+        return subprocess.CompletedProcess(
+            args=["claude", "-p", "Execute the PLAN.md in this module."],
+            returncode=0,
+            stdout="ok",
+            stderr="",
+        )
 
-        def run(self):
-            return None
-
-    with patch(
-        "master_orchestrator.orchestrator_class_from_main",
-        return_value=_StubOrchestrator,
-    ):
+    with patch("master_orchestrator.run_module_claude", side_effect=_fake_claude):
         master = MasterOrchestrator(cfg, ui=ObservationDeckShim())
         master.run()
 
@@ -277,4 +276,7 @@ class ObservationDeckShim:
         pass
 
     def epic_all_done(self) -> None:
+        pass
+
+    def info(self, *_a, **_k) -> None:
         pass
