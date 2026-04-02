@@ -56,7 +56,7 @@ class DockerManager:
                 raise HarnessError(
                     f"Docker container failed to start (exit {result.returncode}).\n"
                     f"stderr: {result.stderr.strip()}\n"
-                    f"Ensure the image is built: docker build -t {image} ./sandbox"
+                    f"Ensure the image is built: docker build -f sandbox/Dockerfile -t {image} ."
                 )
             self._container_id = result.stdout.strip()
             self.ui.info(f"Docker container started: {self._container_id[:12]}")
