@@ -188,6 +188,14 @@ class VisionBridge:
         return f"data:image/png;base64,{b64}"
 
 
+def _first_non_empty_env(*keys: str) -> Optional[str]:
+    for key in keys:
+        raw = os.environ.get(key)
+        if raw is not None and str(raw).strip():
+            return str(raw).strip()
+    return None
+
+
 class BaseLLMClient(ABC):
     """Unified interface for Brain API calls (text and vision)."""
 
@@ -213,7 +221,11 @@ class AnthropicLLMClient(BaseLLMClient):
     def __init__(self) -> None:
         if anthropic is None:
             raise RuntimeError("anthropic package not installed. Run: pip install anthropic")
-        self._client = anthropic.Anthropic()
+        key = _first_non_empty_env("ANTHROPIC_API_KEY")
+        kwargs: dict[str, Any] = {}
+        if key:
+            kwargs["api_key"] = key
+        self._client = anthropic.Anthropic(**kwargs)
 
     def complete_text(self, model: str, user_text: str, *, max_tokens: int) -> str:
         message = self._client.messages.create(
@@ -308,14 +320,6 @@ def _normalize_provider_id(provider: str) -> str:
     return (provider or "").strip().lower().replace("_", "-")
 
 
-def _first_non_empty_env(*keys: str) -> Optional[str]:
-    for key in keys:
-        raw = os.environ.get(key)
-        if raw is not None and str(raw).strip():
-            return str(raw).strip()
-    return None
-
-
 def _resolve_openai_api_key(provider: str, base_url: Optional[str]) -> Optional[str]:
     """API key for :class:`OpenAI` client: prefer role-specific .env vars for multi-provider setups.
 
@@ -325,12 +329,17 @@ def _resolve_openai_api_key(provider: str, base_url: Optional[str]) -> Optional[
 
     Returns ``None`` when no env key is set so the SDK uses its default (typically
     ``OPENAI_API_KEY`` for the default endpoint).
+
+    DeepSeek routing uses a substring check (``\"deepseek\" in base_url``) for the
+    official API host. Custom proxies without that substring use the generic
+    compatible key chain; set ``OPENAI_COMPATIBLE_API_KEY`` or ``OPENAI_API_KEY``.
     """
     pid = _normalize_provider_id(provider)
     bu = (base_url or "").lower()
     if pid == "openai":
         return _first_non_empty_env("OPENAI_API_KEY")
     if pid == "openai-compatible":
+        # Hostname heuristic — see docstring if your DeepSeek proxy URL lacks "deepseek".
         if "deepseek" in bu:
             return _first_non_empty_env("DEEPSEEK_API_KEY", "OPENAI_API_KEY")
         return _first_non_empty_env("OPENAI_COMPATIBLE_API_KEY", "OPENAI_API_KEY")

@@ -81,6 +81,39 @@ def test_factory_openai_passes_openai_api_key_from_env(monkeypatch):
     mock_cls.assert_called_once_with(base_url=None, api_key="sk-openai-test")
 
 
+def test_factory_passes_openai_compatible_api_key_for_non_deepseek_host(monkeypatch):
+    """Generic compatible servers use OPENAI_COMPATIBLE_API_KEY before OPENAI_API_KEY."""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "sk-groq-or-local")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-fallback")
+    with patch("llm_provider.OpenAILLMClient") as mock_cls:
+        LLMProviderFactory.create("openai-compatible", base_url="https://api.groq.com/openai/v1")
+    mock_cls.assert_called_once_with(
+        base_url="https://api.groq.com/openai/v1",
+        api_key="sk-groq-or-local",
+    )
+
+
+def test_anthropic_client_passes_explicit_api_key_when_set(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-explicit")
+    with patch("llm_provider.anthropic") as mock_anthropic:
+        mock_anthropic.Anthropic.return_value = MagicMock()
+        from llm_provider import AnthropicLLMClient
+
+        AnthropicLLMClient()
+    mock_anthropic.Anthropic.assert_called_once_with(api_key="sk-ant-explicit")
+
+
+def test_anthropic_client_omits_api_key_kwarg_when_unset(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with patch("llm_provider.anthropic") as mock_anthropic:
+        mock_anthropic.Anthropic.return_value = MagicMock()
+        from llm_provider import AnthropicLLMClient
+
+        AnthropicLLMClient()
+    mock_anthropic.Anthropic.assert_called_once_with()
+
+
 def test_extract_anthropic_message_text_from_blocks():
     block = MagicMock()
     block.type = "text"

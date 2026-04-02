@@ -155,6 +155,49 @@ def test_effective_models_env_overrides_yaml(tmp_path: Path, monkeypatch) -> Non
     assert c.effective_models["evaluator"] == "gpt-4.1"
 
 
+def test_effective_models_single_model_preserves_provider_and_base_url_keys(
+    tmp_path: Path,
+) -> None:
+    """single_model_mode flattens only role model ids; *_provider / *_base_url stay intact."""
+    _write_docs(tmp_path)
+    y = tmp_path / "harness.yaml"
+    y.write_text(
+        textwrap.dedent(
+            """
+        build_command: "echo ok"
+        models:
+          planner: "planner-model"
+          generator: "generator-model"
+          evaluator: "evaluator-model"
+          contract_verifier: "cv-model"
+          evaluator_provider: "openai"
+          contract_verifier_provider: "openai-compatible"
+          contract_verifier_base_url: "https://api.deepseek.com"
+        paths:
+          workspace_dir: ./workspace
+          architecture_doc: ./ARCHITECTURE.md
+          specification_doc: ./SPEC.md
+          plan_file: ./workspace/PLAN.md
+          history_log: ./docs/history.json
+        evaluation:
+          strategy: exit_code
+        ablation:
+          single_model_mode: true
+    """
+        ).strip()
+    )
+    c = HarnessConfig.from_yaml(y)
+    gen = c.models["generator"]
+    em = c.effective_models
+    assert em["planner"] == gen
+    assert em["generator"] == gen
+    assert em["evaluator"] == gen
+    assert em["contract_verifier"] == gen
+    assert em["evaluator_provider"] == "openai"
+    assert em["contract_verifier_provider"] == "openai-compatible"
+    assert em["contract_verifier_base_url"] == "https://api.deepseek.com"
+
+
 def test_paths_section_aliases(tmp_path: Path) -> None:
     _write_docs(tmp_path)
     y = tmp_path / "harness.yaml"
