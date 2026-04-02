@@ -10,6 +10,14 @@ from typing import Any, Optional, Union
 
 from llm_provider import brain_client_for_role
 
+
+def _brain_models_for_config(config: Any) -> dict[str, str]:
+    """YAML ``models`` plus provider keys and ``HARNESS_MODEL_*`` env overrides."""
+    em = getattr(config, "effective_models", None)
+    if isinstance(em, dict):
+        return em
+    return getattr(config, "models", {}) or {}
+
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:  # pragma: no cover
@@ -299,11 +307,35 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
         self.config = config
 
     def _vision_prompt_text(self) -> str:
-        """Rubric from harness.yaml (evaluation.vision_rubric) or built-in default."""
+        """Rubric from harness.yaml (evaluation.vision_rubric) or built-in default.
+
+        If ``evaluation.vision_rubric_supplement`` is set, the file contents are appended
+        (e.g. Anthropic-style frontend-design principles vendored under project/docs/).
+        """
         rubric = getattr(self.config, "vision_rubric", None)
         if rubric and str(rubric).strip():
-            return str(rubric).strip()
-        return DEFAULT_VISION_RUBRIC
+            base = str(rubric).strip()
+        else:
+            base = DEFAULT_VISION_RUBRIC
+
+        sup_path: Optional[Path] = getattr(self.config, "vision_rubric_supplement", None)
+        if sup_path is None:
+            ev = getattr(self.config, "evaluation", None)
+            if ev is not None:
+                sup_path = getattr(ev, "vision_rubric_supplement", None)
+
+        if not sup_path:
+            return base
+
+        try:
+            extra = Path(sup_path).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            return (
+                f"{base}\n\n---\n\n"
+                f"[vision_rubric_supplement could not be read: {sup_path}: {exc}]"
+            )
+
+        return f"{base}\n\n---\n\n## Repo design principles (supplement)\n\n{extra}"
 
     def _resolve_playwright_target(self) -> Union[Path, str]:
         """Static file under workspace, absolute path, or http(s) URL."""
@@ -409,11 +441,11 @@ class PlaywrightVisualEvaluator(BaseEvaluator):
     def _evaluate_with_vision(self, screenshot_path: Path) -> EvalResult:
         """Send the screenshot to the configured Brain LLM and parse APPROVE/REJECT."""
         try:
-            client = brain_client_for_role(getattr(self.config, "models", None), "evaluator")
+            client = brain_client_for_role(_brain_models_for_config(self.config), "evaluator")
         except (ValueError, RuntimeError) as exc:
             return EvalResult(passed=False, output=str(exc), exit_code=1)
 
-        models = getattr(self.config, "models", {}) or {}
+        models = _brain_models_for_config(self.config)
         vision_model = models.get("evaluator", "claude-3-5-sonnet-20241022")
         try:
             png_bytes = screenshot_path.read_bytes()
@@ -470,7 +502,7 @@ class ContractVerifier:
     ) -> EvalResult:
         """Return passed=True if the contract is an acceptable 1:1 map to SPEC for this task."""
         try:
-            client = brain_client_for_role(getattr(self.config, "models", None), "contract_verifier")
+            client = brain_client_for_role(_brain_models_for_config(self.config), "contract_verifier")
         except (ValueError, RuntimeError) as exc:
             return EvalResult(passed=False, output=str(exc), exit_code=1)
 
@@ -485,7 +517,7 @@ class ContractVerifier:
             contract_text = contract_path.read_text(encoding="utf-8")
         except OSError as exc:
             return EvalResult(passed=False, output=f"Could not read files: {exc}", exit_code=1)
-        models = getattr(self.config, "models", {}) or {}
+        models = _brain_models_for_config(self.config)
         model = models.get("contract_verifier") or models.get("evaluator") or "claude-3-5-sonnet-20241022"
 
         user_block = (
@@ -622,11 +654,11 @@ class PlaywrightFunctionalEvaluator(BaseEvaluator):
         task,
     ) -> EvalResult:
         try:
-            client = brain_client_for_role(getattr(self.config, "models", None), "evaluator")
+            client = brain_client_for_role(_brain_models_for_config(self.config), "evaluator")
         except (ValueError, RuntimeError) as exc:
             return EvalResult(passed=False, output=str(exc), exit_code=1)
 
-        models = getattr(self.config, "models", {}) or {}
+        models = _brain_models_for_config(self.config)
         model = models.get("evaluator", "claude-3-5-sonnet-20241022")
 
         task_id = getattr(task, "task_id", "") if task else ""

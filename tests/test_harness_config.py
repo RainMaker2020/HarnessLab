@@ -126,6 +126,35 @@ def test_models_section_includes_brain_provider_keys(tmp_path: Path) -> None:
     assert c.models["contract_verifier_base_url"] == "https://api.deepseek.com"
 
 
+def test_effective_models_env_overrides_yaml(tmp_path: Path, monkeypatch) -> None:
+    """HARNESS_MODEL_EVALUATOR overrides harness.yaml model id."""
+    _write_docs(tmp_path)
+    y = tmp_path / "harness.yaml"
+    y.write_text(
+        textwrap.dedent(
+            """
+        build_command: "echo ok"
+        models:
+          planner: p
+          generator: g
+          evaluator: claude-from-yaml
+        paths:
+          workspace_dir: ./workspace
+          architecture_doc: ./ARCHITECTURE.md
+          specification_doc: ./SPEC.md
+          plan_file: ./workspace/PLAN.md
+          history_log: ./docs/history.json
+        evaluation:
+          strategy: exit_code
+    """
+        ).strip()
+    )
+    monkeypatch.setenv("HARNESS_MODEL_EVALUATOR", "gpt-4.1")
+    c = HarnessConfig.from_yaml(y)
+    assert c.models["evaluator"] == "claude-from-yaml"
+    assert c.effective_models["evaluator"] == "gpt-4.1"
+
+
 def test_paths_section_aliases(tmp_path: Path) -> None:
     _write_docs(tmp_path)
     y = tmp_path / "harness.yaml"
@@ -169,3 +198,27 @@ def test_missing_required_key_raises(tmp_path: Path) -> None:
     )
     with pytest.raises(HarnessError, match="build_command"):
         HarnessConfig.from_yaml(y)
+
+
+def test_vision_rubric_supplement_resolves(tmp_path: Path) -> None:
+    _write_docs(tmp_path)
+    (tmp_path / "design_extra.md").write_text("SUPPLEMENT_TEXT", encoding="utf-8")
+    y = tmp_path / "harness.yaml"
+    y.write_text(
+        textwrap.dedent(
+            """
+        workspace_dir: ./workspace
+        architecture_doc: ./ARCHITECTURE.md
+        spec_doc: ./SPEC.md
+        plan_file: ./workspace/PLAN.md
+        history_file: ./docs/history.json
+        build_command: "echo ok"
+        evaluation:
+          strategy: exit_code
+          vision_rubric: "Rubric body."
+          vision_rubric_supplement: ./design_extra.md
+    """
+        ).strip()
+    )
+    c = HarnessConfig.from_yaml(y)
+    assert c.evaluation.vision_rubric_supplement == (tmp_path / "design_extra.md").resolve()

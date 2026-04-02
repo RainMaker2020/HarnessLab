@@ -26,6 +26,7 @@ class ModelRouter:
     and returns the appropriate claude CLI arguments for a given role (planner,
     generator, evaluator). Falls back to DEFAULTS when a role is not specified in
     config. No model string is ever hardcoded in Worker or Orchestrator code.
+    Uses ``effective_models`` when present so ``HARNESS_MODEL_*`` env overrides apply.
     """
 
     DEFAULTS = {
@@ -39,13 +40,19 @@ class ModelRouter:
         """Initialize with a HarnessConfig that exposes a ``models`` dict."""
         self.config = config
 
+    def _models(self) -> dict:
+        em = getattr(self.config, "effective_models", None)
+        if isinstance(em, dict):
+            return em
+        return getattr(self.config, "models", {}) or {}
+
     def get_model(self, role: str) -> str:
         """Return the model identifier for the given role.
 
         Looks up ``config.models[role]`` first; falls back to DEFAULTS[role],
         then to the generic baseline if neither is defined.
         """
-        models = getattr(self.config, "models", {}) or {}
+        models = self._models()
         return models.get(role) or self.DEFAULTS.get(role, "claude-sonnet-4-6")
 
     def resolve(self, role: str) -> ModelRoleResolution:
@@ -55,7 +62,7 @@ class ModelRouter:
         ``<role>_provider`` (default ``anthropic``) and ``<role>_base_url``.
         Planner and generator return ``provider=None`` (Claude CLI only).
         """
-        models = getattr(self.config, "models", {}) or {}
+        models = self._models()
         model = models.get(role) or self.DEFAULTS.get(role, "claude-sonnet-4-6")
         if role not in _BRAIN_API_ROLES:
             return ModelRoleResolution(model=model, provider=None, base_url=None)

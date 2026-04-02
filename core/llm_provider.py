@@ -12,6 +12,7 @@ when the server rejects the first (see ``_chat_completions_create_with_token_bud
 from __future__ import annotations
 
 import base64
+import os
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
@@ -250,12 +251,19 @@ class AnthropicLLMClient(BaseLLMClient):
 class OpenAILLMClient(BaseLLMClient):
     """OpenAI Chat Completions or compatible servers (``base_url`` for DeepSeek / Ollama)."""
 
-    def __init__(self, base_url: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        *,
+        api_key: Optional[str] = None,
+    ) -> None:
         if OpenAI is None:
             raise RuntimeError("openai package not installed. Run: pip install openai")
         kwargs: dict[str, Any] = {}
         if base_url:
             kwargs["base_url"] = base_url
+        if api_key is not None and str(api_key).strip():
+            kwargs["api_key"] = str(api_key).strip()
         self._client = OpenAI(**kwargs)
 
     def complete_text(self, model: str, user_text: str, *, max_tokens: int) -> str:
@@ -300,6 +308,35 @@ def _normalize_provider_id(provider: str) -> str:
     return (provider or "").strip().lower().replace("_", "-")
 
 
+def _first_non_empty_env(*keys: str) -> Optional[str]:
+    for key in keys:
+        raw = os.environ.get(key)
+        if raw is not None and str(raw).strip():
+            return str(raw).strip()
+    return None
+
+
+def _resolve_openai_api_key(provider: str, base_url: Optional[str]) -> Optional[str]:
+    """API key for :class:`OpenAI` client: prefer role-specific .env vars for multi-provider setups.
+
+    - ``openai`` → ``OPENAI_API_KEY``
+    - ``openai-compatible`` with DeepSeek host → ``DEEPSEEK_API_KEY``, then ``OPENAI_API_KEY``
+    - other compatible servers → ``OPENAI_COMPATIBLE_API_KEY``, then ``OPENAI_API_KEY``
+
+    Returns ``None`` when no env key is set so the SDK uses its default (typically
+    ``OPENAI_API_KEY`` for the default endpoint).
+    """
+    pid = _normalize_provider_id(provider)
+    bu = (base_url or "").lower()
+    if pid == "openai":
+        return _first_non_empty_env("OPENAI_API_KEY")
+    if pid == "openai-compatible":
+        if "deepseek" in bu:
+            return _first_non_empty_env("DEEPSEEK_API_KEY", "OPENAI_API_KEY")
+        return _first_non_empty_env("OPENAI_COMPATIBLE_API_KEY", "OPENAI_API_KEY")
+    return None
+
+
 class LLMProviderFactory:
     """Construct a ``BaseLLMClient`` from harness ``provider`` and optional ``base_url``."""
 
@@ -310,14 +347,17 @@ class LLMProviderFactory:
             return AnthropicLLMClient()
         if pid == "openai":
             bu = str(base_url).strip() if base_url else None
-            return OpenAILLMClient(base_url=bu)
+            key = _resolve_openai_api_key("openai", bu)
+            return OpenAILLMClient(base_url=bu, api_key=key)
         if pid == "openai-compatible":
             if not base_url or not str(base_url).strip():
                 raise ValueError(
                     "provider 'openai-compatible' requires a non-empty base_url "
                     "(e.g. https://api.deepseek.com or http://localhost:11434/v1)"
                 )
-            return OpenAILLMClient(base_url=str(base_url).strip())
+            bu_s = str(base_url).strip()
+            key = _resolve_openai_api_key("openai-compatible", bu_s)
+            return OpenAILLMClient(base_url=bu_s, api_key=key)
         raise ValueError(
             f"Unknown LLM provider {provider!r}. "
             "Use: anthropic, openai, or openai-compatible."

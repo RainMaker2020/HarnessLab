@@ -11,9 +11,13 @@ def load_harness_env() -> None:
     Uses ``python-dotenv`` when installed. Existing environment variables are not
     overwritten (``override=False``) so CI and shells keep precedence.
 
-    Expected keys for Brain LLM clients (see SDK docs): ``ANTHROPIC_API_KEY``,
-    ``OPENAI_API_KEY`` (also used by OpenAI-compatible servers such as DeepSeek
-    when using the OpenAI SDK).
+    Expected keys for Brain LLM clients (see SDK docs): ``ANTHROPIC_API_KEY``;
+    ``OPENAI_API_KEY`` for provider ``openai``; ``DEEPSEEK_API_KEY`` or
+    ``OPENAI_API_KEY`` for DeepSeek (``openai-compatible`` + ``api.deepseek.com``);
+    ``OPENAI_COMPATIBLE_API_KEY`` or ``OPENAI_API_KEY`` for other compatible
+    servers. Per-role model ids are configured in ``harness.yaml`` (``models``);
+    optional env overrides ``HARNESS_MODEL_*`` are documented on
+    ``HarnessConfig.effective_models``.
     """
     try:
         from dotenv import load_dotenv
