@@ -14,7 +14,7 @@ if str(_CORE) not in sys.path:
     sys.path.insert(0, str(_CORE))
 
 from harness.env_bootstrap import load_harness_env
-from harness.eval.evaluator import EvalResult, PlaywrightVisualEvaluator
+from harness.eval.evaluator import EvalResult, build_evaluator
 from harness.exceptions import HarnessError
 from harness.git.git_paths import git_changed_paths_relative_to_workspace
 from harness.config.harness_config import HarnessConfig
@@ -63,10 +63,10 @@ def _format_verdict(result: EvalResult, task_id: str | None) -> str:
     )
 
 
-def run_playwright_eval(cfg: HarnessConfig) -> EvalResult:
-    """Run Playwright visual evaluator (ignores evaluation.strategy exit_code shortcut)."""
+def run_evaluator(cfg: HarnessConfig) -> EvalResult:
+    """Run the evaluator configured in harness.yaml (respects evaluation.strategy)."""
     edited = git_changed_paths_relative_to_workspace(cfg.workspace_dir)
-    evaluator = PlaywrightVisualEvaluator(cfg)
+    evaluator = build_evaluator(cfg)
     return evaluator.run(edited_paths=edited)
 
 
@@ -96,7 +96,7 @@ def harness_eval_text(cfg: HarnessConfig, task_id: str) -> str:
             f"Error: task_id mismatch. Current next task is {next_t.task_id!r}; "
             f"got {task_id!r}. Use harness_next_task or pass the matching id."
         )
-    result = run_playwright_eval(cfg)
+    result = run_evaluator(cfg)
     return _format_verdict(result, task_id)
 
 
@@ -111,7 +111,7 @@ def harness_progress_text(cfg: HarnessConfig) -> str:
 def harness_commit_impl(cfg: HarnessConfig, task_id: str, message: str, repo_root: Path) -> str:
     """
     1) Require task_id to match the first unchecked PLAN task.
-    2) Run Playwright visual evaluator; on failure, do not commit.
+    2) Run the configured evaluator (respects evaluation.strategy); on failure, do not commit.
     3) git add -A && git commit at repo_root.
     """
     if not message or not message.strip():
@@ -131,7 +131,7 @@ def harness_commit_impl(cfg: HarnessConfig, task_id: str, message: str, repo_roo
             f"got {task_id!r}. Fix PLAN or pass the correct task id."
         )
 
-    result = run_playwright_eval(cfg)
+    result = run_evaluator(cfg)
     if not result.passed:
         return (
             "Commit blocked: evaluator did not pass.\n\n" + _format_verdict(result, task_id)
@@ -187,7 +187,7 @@ def harness_next_task() -> str:
 
 @mcp.tool()
 def harness_eval(task_id: str) -> str:
-    """Run the Playwright visual evaluator; task_id must match the next unchecked PLAN task. Returns VERDICT line and logs."""
+    """Run the configured evaluator (respects evaluation.strategy); task_id must match the next unchecked PLAN task. Returns VERDICT line and logs."""
     load_harness_env()
     cfg = _load_config()
     return harness_eval_text(cfg, task_id=task_id.strip())
@@ -195,7 +195,7 @@ def harness_eval(task_id: str) -> str:
 
 @mcp.tool()
 def harness_commit(task_id: str, message: str) -> str:
-    """Commit only after visual eval passes; must match current next PLAN task. Uses git at repo root."""
+    """Commit only after evaluator passes (respects evaluation.strategy); must match current next PLAN task. Uses git at repo root."""
     load_harness_env()
     cfg = _load_config()
     return harness_commit_impl(cfg, task_id, message, _REPO)

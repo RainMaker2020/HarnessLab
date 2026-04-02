@@ -18,7 +18,7 @@ from harness.mcp_server import (  # noqa: E402
     harness_progress_text,
     main,
     mcp,
-    run_playwright_eval,
+    run_evaluator,
 )
 
 __all__ = [
@@ -29,7 +29,7 @@ __all__ = [
     "harness_progress_text",
     "main",
     "mcp",
-    "run_playwright_eval",
+    "run_evaluator",
 ]
 
 if __name__ == "__main__":
