@@ -139,6 +139,7 @@ def test_token_budget_succeeds_on_first_call_without_retry():
 
 
 def test_token_budget_retries_with_max_completion_tokens_after_bad_request():
+    pytest.importorskip("openai", reason="openai package not installed")
     mock_client = MagicMock()
     ok = MagicMock()
     resp_400 = MagicMock()

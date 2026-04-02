@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 from harness.eval.evaluator import EvalResult  # noqa: E402
 from harness.exceptions import HarnessError  # noqa: E402
 from harness.config.harness_config import HarnessConfig  # noqa: E402
+pytest.importorskip("mcp", reason="mcp package not installed — skipping MCP server tests")
 import mcp_server  # noqa: E402
 
 
