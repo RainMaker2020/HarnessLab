@@ -44,3 +44,4 @@ When the **Harness MCP server** (`harnesslab` in `.mcp.json`) is available, pref
 ## Hooks (Claude Code)
 - **PostToolUse** (`core/hooks/post_write_gate.py`): runs the build after writes under the workspace dir; exit 1 blocks progress until fixed.
 - **Stop** (`core/hooks/pre_stop_check.sh`): exit 1 if `PLAN.md` still has unchecked tasks — finish or document blocked state before stopping.
+  - **Escape hatch:** Set `HARNESS_SKIP_STOP_HOOK=1` in your environment to bypass the Stop hook. Use only during initial project setup (before any tasks have been started) or when diagnosing hook issues.

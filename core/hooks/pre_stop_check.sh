@@ -2,6 +2,11 @@
 set -euo pipefail
 # HARNESS_ROOT can be overridden for testing; defaults to repo root derived from script location
 ROOT="${HARNESS_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+# Escape hatch: set HARNESS_SKIP_STOP_HOOK=1 during initial project setup
+if [ "${HARNESS_SKIP_STOP_HOOK:-0}" = "1" ]; then
+  echo "HARNESS: Stop hook bypassed (HARNESS_SKIP_STOP_HOOK=1)."
+  exit 0
+fi
 PLAN=""
 if command -v python3 >/dev/null 2>&1; then
   PLAN="$(cd "$ROOT" && python3 - <<'PY'

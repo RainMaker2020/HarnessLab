@@ -67,3 +67,11 @@ def test_fails_loudly_when_harness_yaml_missing_and_python_fails(tmp_path):
     assert r.returncode == 1
     # Should print an error message, not silently pass
     assert r.stdout.strip() != "" or r.stderr.strip() != ""
+
+
+def test_skip_hook_env_var_allows_exit_with_pending_tasks(tmp_path):
+    """HARNESS_SKIP_STOP_HOOK=1 must allow clean exit even when tasks are pending."""
+    _make_harness(tmp_path, "project/workspace/PLAN.md", ["- [ ] TASK_01: pending"])
+    r = _run(tmp_path, env_extra={"HARNESS_SKIP_STOP_HOOK": "1"})
+    assert r.returncode == 0
+    assert "bypassed" in r.stdout.lower()
