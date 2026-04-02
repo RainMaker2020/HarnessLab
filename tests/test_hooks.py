@@ -76,3 +76,21 @@ def test_post_write_gate_skips_when_path_outside_workspace(tmp_path: Path, monke
         text=True,
     )
     assert proc.returncode == 0
+
+
+def test_post_write_gate_skips_evaluator_placeholder_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Placeholder build_command must not run the real build (or fail CI on exit 1)."""
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_minimal_harness(tmp_path, build_cmd="echo 'EVALUATOR_PLACEHOLDER: always passes'")
+    (ws / "x.txt").write_text("z", encoding="utf-8")
+
+    monkeypatch.setenv("HARNESS_POST_WRITE_GATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_TOOL_INPUT", json.dumps({"path": "workspace/x.txt"}))
+
+    proc = subprocess.run(
+        [sys.executable, str(_post_write_gate_script())],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0

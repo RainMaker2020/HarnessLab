@@ -178,3 +178,175 @@ def test_run_evaluator_respects_exit_code_strategy(tmp_path: Path) -> None:
     mock_playwright.assert_not_called()
     assert result.passed is True
     assert result.exit_code == 0
+
+
+def test_harness_next_task_text_when_no_unchecked_tasks(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir(parents=True)
+    (ws / "PLAN.md").write_text("- [x] TASK_01: done\n", encoding="utf-8")
+    (ws / "a.md").write_text("a", encoding="utf-8")
+    (ws / "s.md").write_text("s", encoding="utf-8")
+    (ws / "history.json").write_text("[]", encoding="utf-8")
+    yml = tmp_path / "harness.yaml"
+    yml.write_text(
+        """
+project:
+  name: test
+paths:
+  workspace_dir: "./ws"
+  architecture_doc: "./ws/a.md"
+  specification_doc: "./ws/s.md"
+  plan_file: "./ws/PLAN.md"
+  history_log: "./ws/history.json"
+evaluation:
+  build_command: "echo ok"
+  strategy: exit_code
+orchestration:
+  mode: linear
+  max_retries_per_task: 1
+  interactive_mode: false
+  auto_rollback: true
+  distillation_mode: false
+  test_first: false
+  contract_negotiation_max_retries: 1
+""",
+        encoding="utf-8",
+    )
+    cfg = HarnessConfig.from_yaml(yml)
+    assert "No unchecked" in mcp_server.harness_next_task_text(cfg)
+
+
+def test_harness_eval_text_when_no_unchecked_tasks(tmp_path: Path) -> None:
+    yml = tmp_path / "harness.yaml"
+    ws = tmp_path / "ws"
+    ws.mkdir(parents=True)
+    (ws / "PLAN.md").write_text("- [x] TASK_01: done\n", encoding="utf-8")
+    (ws / "a.md").write_text("a", encoding="utf-8")
+    (ws / "s.md").write_text("s", encoding="utf-8")
+    (ws / "history.json").write_text("[]", encoding="utf-8")
+    yml.write_text(
+        """
+project:
+  name: test
+paths:
+  workspace_dir: "./ws"
+  architecture_doc: "./ws/a.md"
+  specification_doc: "./ws/s.md"
+  plan_file: "./ws/PLAN.md"
+  history_log: "./ws/history.json"
+evaluation:
+  build_command: "echo ok"
+  strategy: exit_code
+orchestration:
+  mode: linear
+  max_retries_per_task: 1
+  interactive_mode: false
+  auto_rollback: true
+  distillation_mode: false
+  test_first: false
+  contract_negotiation_max_retries: 1
+""",
+        encoding="utf-8",
+    )
+    cfg = HarnessConfig.from_yaml(yml)
+    out = mcp_server.harness_eval_text(cfg, "TASK_01")
+    assert "nothing to evaluate" in out.lower()
+
+
+def test_harness_commit_impl_empty_message(tmp_path: Path) -> None:
+    yml = _write_minimal_harness(tmp_path)
+    cfg = HarnessConfig.from_yaml(yml)
+    assert "non-empty" in mcp_server.harness_commit_impl(cfg, "TASK_01", "   ", tmp_path).lower()
+
+
+def test_harness_commit_impl_no_pending_task(tmp_path: Path) -> None:
+    yml = _write_minimal_harness(tmp_path)
+    (tmp_path / "ws" / "PLAN.md").write_text("- [x] TASK_01: done\n", encoding="utf-8")
+    cfg = HarnessConfig.from_yaml(yml)
+    assert "no pending" in mcp_server.harness_commit_impl(cfg, "TASK_01", "msg", tmp_path).lower()
+
+
+def test_harness_commit_impl_not_a_git_repo_after_eval_passes(tmp_path: Path) -> None:
+    yml = _write_minimal_harness(tmp_path)
+    cfg = HarnessConfig.from_yaml(yml)
+    fake = EvalResult(passed=True, output="ok", exit_code=0)
+    nogit = tmp_path / "not_a_repo"
+    nogit.mkdir()
+    with patch("harness.mcp_server.run_playwright_eval", return_value=fake):
+        out = mcp_server.harness_commit_impl(cfg, "TASK_01", "msg", nogit)
+    assert "not a git repository" in out.lower()
+
+
+def test_harness_commit_impl_git_add_failure(tmp_path: Path) -> None:
+    yml = _write_minimal_harness(tmp_path)
+    cfg = HarnessConfig.from_yaml(yml)
+    fake = EvalResult(passed=True, output="ok", exit_code=0)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@t.co"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "t"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["git", "add", "-A"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "add failed")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with patch("harness.mcp_server.run_playwright_eval", return_value=fake):
+        with patch("harness.mcp_server.subprocess.run", side_effect=fake_run):
+            out = mcp_server.harness_commit_impl(cfg, "TASK_01", "msg", tmp_path)
+    assert "git add failed" in out.lower()
+
+
+def test_harness_commit_impl_git_commit_failure(tmp_path: Path) -> None:
+    yml = _write_minimal_harness(tmp_path)
+    cfg = HarnessConfig.from_yaml(yml)
+    fake_eval = EvalResult(passed=True, output="ok", exit_code=0)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@t.co"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "t"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["git", "add", "-A"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["git", "commit"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "nothing to commit")
+        if cmd[:3] == ["git", "rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(cmd, 0, "abc\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with patch("harness.mcp_server.run_playwright_eval", return_value=fake_eval):
+        with patch("harness.mcp_server.subprocess.run", side_effect=fake_run):
+            out = mcp_server.harness_commit_impl(cfg, "TASK_01", "msg", tmp_path)
+    assert "git commit failed" in out.lower()

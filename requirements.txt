@@ -3,6 +3,7 @@ pyyaml>=6.0
 python-dotenv>=1.0
 rich>=13.7
 pytest>=8.0
+pytest-cov>=7.0
 pytest-mock>=3.12
 playwright>=1.40
 anthropic>=0.40

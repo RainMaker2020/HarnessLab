@@ -1,6 +1,6 @@
 # How HarnessLab works (repository guide)
 
-This document describes how the **HarnessLab** codebase is structured, how **Phase 2** runs the task loop via **Claude Code** (`CLAUDE.md`, slash commands, hooks), and which components still use the **Claude CLI** versus the **Anthropic HTTP API**.
+This document describes how the **HarnessLab** codebase is structured, how **Phase 2** runs the task loop via **Claude Code** (`CLAUDE.md`, slash commands, hooks), and which components use the **Claude CLI** (worker) versus **HTTP APIs** (Brain: evaluator / contract verifier).
 
 ---
 
@@ -20,7 +20,7 @@ For day-to-day work, prefer **Claude Code** at the repo root with `/harness-run`
 
 ## 2. Configuration: single source of truth
 
-**`harness.yaml`** (repo root) is parsed into **`HarnessConfig`** (`core/harness_config.py`).
+**`harness.yaml`** (repo root) is parsed into **`HarnessConfig`** (`core/harness/config/harness_config.py`).
 
 Important sections:
 
@@ -28,22 +28,39 @@ Important sections:
 |---------|---------|
 | **`paths.*`** | Where `ARCHITECTURE.md`, `SPEC.md`, `workspace/`, history, trajectories, Chroma, EPIC interfaces, etc. live. Defaults keep everything under **`./project/`** (see `harness.yaml`). |
 | **`models.*`** | Model id per **role** (`planner`, `generator`, `evaluator`, `contract_verifier`). Used by `ModelRouter` for CLI `--model` and by API calls where applicable. |
-| **`runtime.*`** | `mode: local` runs workers on the host; `docker` runs `claude` inside the sandbox image (`core/sandbox.py`). |
+| **`runtime.*`** | `mode: local` runs workers on the host; `docker` runs `claude` inside the sandbox image (`core/harness/runtime/sandbox.py`). |
 | **`evaluation.*`** | Evaluator strategy (`exit_code`, `playwright`, …), `build_command`, optional `contract_test_command`, timeouts, vision rubric. |
 | **`orchestration.*`** | Linear vs recursive, retries, `test_first`, `interactive_mode`, distillation, wisdom RAG, etc. |
 
-**`ModelRouter`** (`core/model_router.py`) turns `config.models[role]` into CLI fragments like `["--model", "<id>"]` for subprocesses. It does not call HTTP APIs by itself.
+**`ModelRouter`** (`core/harness/config/model_router.py`) turns `config.models[role]` into CLI fragments like `["--model", "<id>"]` for subprocesses. It does not call HTTP APIs by itself.
 
 ---
 
-## 3. Two ways the harness talks to “Claude”
+## 3. Worker (CLI) vs Brain (HTTP API)
+
+### Roles in code
+
+- **Worker (Claude CLI only)** — Anything that runs `claude` as a subprocess: interactive **Claude Code** sessions, **`manage.py --init`** (scaffolder), **contract test generation** (`ContractPlanner`), and **EPIC** module runs (`claude -p …`). These use `models.planner` (scaffold + contract file generation) or ad hoc `claude` invocations. They are **not** routed through OpenAI/DeepSeek; auth is whatever the **Claude Code** CLI uses (subscription / login). That is **separate** from `.env` Brain keys unless you change the code.
+- **Brain (HTTP only)** — Only **`evaluator`** and **`contract_verifier`** (`core/harness/llm/llm_provider.py`, `brain_client_for_role`). Used for **Playwright + vision** rubric scoring and **contract verification** (NEGOTIATE gate). Supports **Anthropic**, **OpenAI**, or **OpenAI-compatible** servers (e.g. DeepSeek via `base_url`).
+
+So **`planner`-driven Python paths** (`--init`, generating `TASK_XX.contract.test.ts`) are **still the Claude CLI**, not the Brain APIs. The Brain only runs when the harness calls the evaluator or contract verifier.
+
+### Default vs OpenAI / DeepSeek Brain
+
+If you omit `evaluator_provider` / `contract_verifier_provider` in `harness.yaml`, the code **defaults the Brain to Anthropic** (`ANTHROPIC_API_KEY`). To use **OpenAI** or **DeepSeek** as Brain, you must set those keys explicitly, for example:
+
+- `evaluator_provider: openai` or `openai-compatible`
+- `evaluator_base_url` / `contract_verifier_base_url` when using compatible APIs (e.g. DeepSeek)
+- Matching `.env` entries: see `.env.example`
+
+Vision evaluation requires a **model that supports images** on whatever provider you choose.
 
 | Mechanism | Used where | Credentials |
 |-----------|------------|-------------|
-| **Claude CLI** (`claude` on `PATH`) | Scaffolder, contract file generation, **Worker** task execution | Whatever the CLI uses (Claude Code login / subscription). **Not** read from `ANTHROPIC_API_KEY` automatically. |
-| **Anthropic Python SDK** (`anthropic.Anthropic()`) | Vision evaluation, **contract verification** (NEGOTIATE gate) | **`ANTHROPIC_API_KEY`** in the environment (or explicit client config). |
+| **Claude CLI** (`claude` on `PATH`) | Scaffolder (`--init`), **contract file generation** (`models.planner`), EPIC `claude -p`, **PLAN** implementation in Claude Code | Claude Code CLI login / subscription. **Not** read from `ANTHROPIC_API_KEY` automatically. |
+| **Brain APIs** (Anthropic, OpenAI, or OpenAI-compatible) | Vision evaluation, **contract verification** (NEGOTIATE gate) | Per role: **`ANTHROPIC_API_KEY`**, **`OPENAI_API_KEY`**, **`DEEPSEEK_API_KEY`**, or **`OPENAI_COMPATIBLE_API_KEY`** as resolved in `llm_provider.py`. |
 
-So: **scaffolding and implementation runs can work with CLI-only auth**, while **contract negotiation and vision paths need an API key** unless you change the code.
+**Summary:** Implementation and planner-side tooling can rely on **Claude CLI only**. **Vision and contract-verify gates** need the **Brain** keys and `harness.yaml` provider settings. If both Brain roles use OpenAI or DeepSeek, the **worker** remains **Claude Code / `claude` CLI** for coding and planning subprocesses.
 
 ---
 
@@ -51,40 +68,44 @@ So: **scaffolding and implementation runs can work with CLI-only auth**, while *
 
 The **PLAN** loop is executed by the **generator agent** in Claude Code, guided by `CLAUDE.md` and `/harness-next`. In-repo building blocks still apply:
 
-1. **`PlanParser`** (`core/harness_plan.py`) — same checklist semantics for tests and tools; agents edit `PLAN.md` directly.
+1. **`PlanParser`** (`core/harness/planning/harness_plan.py`) — same checklist semantics for tests and tools; agents edit `PLAN.md` directly.
 
-2. **Contracts (optional `test_first`)** — **`ContractPlanner`** / **`ContractVerifier`** in `core/planner.py` and `core/evaluator.py` unchanged for CLI-driven contract generation when you run those tools.
+2. **Contracts (optional `test_first`)** — **`ContractPlanner`** (`core/harness/planning/planner.py`) generates tests via **`claude --print`**; **`ContractVerifier`** (`core/harness/eval/evaluator.py`) gates them via the **Brain** API.
 
-3. **`PromptGenerator`** — still assembles prompts if you invoke it from scripts.
+3. **`PromptGenerator`** (`core/harness/prompts/prompt_generator.py`) — assembles prompts if you invoke it from scripts.
 
-4. **`build_evaluator(config)`** (`core/evaluator.py`) — factory for **`ExitCodeEvaluator`**, **`PlaywrightVisualEvaluator`**, **`PlaywrightFunctionalEvaluator`**; used by **`evaluator_cli.py`** and **`MasterOrchestrator`** test wiring.
+4. **`build_evaluator(config)`** (`core/harness/eval/evaluator.py`) — factory for **`ExitCodeEvaluator`**, **`PlaywrightVisualEvaluator`**, **`PlaywrightFunctionalEvaluator`**; used by **`core/harness/evaluator_cli.py`** and orchestration.
 
 5. **Hooks** — `core/hooks/post_write_gate.py` runs `evaluation.build_command` after workspace writes; `core/hooks/pre_stop_check.sh` blocks session end while `PLAN.md` has unchecked tasks.
 
-6. **Wisdom RAG** (`core/wisdom_rag.py`) — optional Chroma enrichment when integrated into your workflow.
+6. **Wisdom RAG** (`core/harness/prompts/wisdom_rag.py`) — optional Chroma enrichment when integrated into your workflow.
 
 ---
 
 ## 5. Module map (what each major file does)
 
+Shims under `core/*.py` re-export the `harness` package where noted in imports. Implementation lives under **`core/harness/`**.
+
 | Module | Responsibility |
 |--------|----------------|
 | `manage.py` | CLI: `--init` (scaffolder), `--distill` (trajectory JSONL). |
-| `core/harness_config.py` | Parse `harness.yaml` → `HarnessConfig`. |
-| `core/model_router.py` | Resolve model strings per role; CLI `--model` args. |
-| `core/scaffolder.py` | `--init`: `claude --print` → parse markers → write ARCHITECTURE / SPEC / PLAN. |
-| `core/planner.py` | Generate `*.contract.test.ts` via `claude --print` (planner model). |
-| `core/harness_plan.py` | `PlanParser`, `HistoryManager` for PLAN / history (no Python loop). |
-| `core/master_orchestrator.py` | EPIC provisioning; inner loop removed in Phase 2 (see README). |
-| `core/evaluator.py` | Exit-code builds, Playwright + vision (API), **ContractVerifier** (API). |
-| `core/prompt_generator.py` | Assemble per-task prompt files and workspace changelog context. |
-| `core/git_isolation.py` | Git helpers used by master flow (see imports there). |
-| `core/project_mapper.py` | Map tasks to impacted files / situational context for prompts. |
-| `core/sandbox.py` | Docker lifecycle and `docker exec … claude`. |
-| `core/trajectory_logger.py` | Append run records for `distillation_export`. |
-| `core/ui.py` | Console UX, Observation Deck. |
-| `core/wisdom_rag.py` | Chroma-based retrieval when `wisdom_rag` is on. |
-| `core/exceptions.py` | `HarnessError` and related. |
+| `core/harness/config/harness_config.py` | Parse `harness.yaml` → `HarnessConfig`. |
+| `core/harness/config/model_router.py` | Resolve model strings per role; CLI `--model` args; Brain roles `evaluator` / `contract_verifier`. |
+| `core/harness/planning/scaffolder.py` | `--init`: `claude --print` → parse markers → write ARCHITECTURE / SPEC / PLAN. |
+| `core/harness/planning/planner.py` | Generate `*.contract.test.ts` via `claude --print` (**planner** model — CLI, not Brain). |
+| `core/harness/planning/harness_plan.py` | `PlanParser`, `HistoryManager` for PLAN / history (no Python loop). |
+| `core/harness/planning/master_orchestrator.py` | EPIC provisioning and `claude -p` per module. |
+| `core/harness/eval/evaluator.py` | Exit-code builds, Playwright + vision (Brain API), **ContractVerifier** (Brain API). |
+| `core/harness/llm/llm_provider.py` | Brain clients: Anthropic, OpenAI, OpenAI-compatible. |
+| `core/harness/mcp_server.py` | MCP stdio server: PLAN, eval, gated commit. |
+| `core/harness/prompts/prompt_generator.py` | Assemble per-task prompt files and workspace changelog context. |
+| `core/harness/git/git_isolation.py` | Git helpers for EPIC / isolation. |
+| `core/harness/prompts/project_mapper.py` | Map tasks to impacted files / situational context for prompts. |
+| `core/harness/runtime/sandbox.py` | Docker lifecycle and `docker exec … claude`. |
+| `core/harness/runtime/trajectory_logger.py` | Append run records for `distillation_export`. |
+| `core/harness/runtime/ui.py` | Console UX, Observation Deck. |
+| `core/harness/prompts/wisdom_rag.py` | Chroma-based retrieval when `wisdom_rag` is on. |
+| `core/harness/exceptions.py` | `HarnessError` and related. |
 
 ---
 
