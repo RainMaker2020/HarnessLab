@@ -16,6 +16,7 @@ if str(_CORE) not in sys.path:
 from env_bootstrap import load_harness_env
 from evaluator import EvalResult, PlaywrightVisualEvaluator
 from exceptions import HarnessError
+from git_paths import git_changed_paths_relative_to_workspace
 from harness_config import HarnessConfig
 from harness_plan import PlanParser
 
@@ -31,28 +32,11 @@ def _default_config_path() -> Path:
     return (_REPO / "harness.yaml").resolve()
 
 
-def _git_changed_files(workspace: Path) -> list[str] | None:
-    """Paths changed vs HEAD under workspace, or None if not a git work tree."""
-    if not (workspace / ".git").exists():
-        return None
-    r = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-    )
-    if r.returncode != 0:
-        return None
-    names = [line.strip() for line in r.stdout.splitlines() if line.strip()]
-    r2 = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-    )
-    if r2.returncode == 0:
-        names.extend(line.strip() for line in r2.stdout.splitlines() if line.strip())
-    return sorted({n.replace("\\", "/") for n in names})
+def _plan_guard(cfg: HarnessConfig) -> str | None:
+    """Return error message if PLAN.md is missing."""
+    if not cfg.plan_file.is_file():
+        return f"PLAN.md not found at {cfg.plan_file}"
+    return None
 
 
 def _load_config(config_path: Path | None = None) -> HarnessConfig:
@@ -81,13 +65,16 @@ def _format_verdict(result: EvalResult, task_id: str | None) -> str:
 
 def run_playwright_eval(cfg: HarnessConfig) -> EvalResult:
     """Run Playwright visual evaluator (ignores evaluation.strategy exit_code shortcut)."""
-    edited = _git_changed_files(cfg.workspace_dir)
+    edited = git_changed_paths_relative_to_workspace(cfg.workspace_dir)
     evaluator = PlaywrightVisualEvaluator(cfg)
     return evaluator.run(edited_paths=edited)
 
 
 def harness_next_task_text(cfg: HarnessConfig) -> str:
     """Return the next unchecked PLAN line or a clear message if none."""
+    err = _plan_guard(cfg)
+    if err:
+        return err
     plan = PlanParser(cfg.plan_file)
     t = plan.next_task()
     if t is None:
@@ -96,7 +83,19 @@ def harness_next_task_text(cfg: HarnessConfig) -> str:
 
 
 def harness_eval_text(cfg: HarnessConfig, task_id: str) -> str:
-    """Run evaluator and return verdict block."""
+    """Run evaluator and return verdict block (task_id must match next PLAN task)."""
+    err = _plan_guard(cfg)
+    if err:
+        return err
+    plan = PlanParser(cfg.plan_file)
+    next_t = plan.next_task()
+    if next_t is None:
+        return "No unchecked tasks (- [ ]) in PLAN.md; nothing to evaluate."
+    if next_t.task_id != task_id.strip():
+        return (
+            f"Error: task_id mismatch. Current next task is {next_t.task_id!r}; "
+            f"got {task_id!r}. Use harness_next_task or pass the matching id."
+        )
     result = run_playwright_eval(cfg)
     return _format_verdict(result, task_id)
 
@@ -106,7 +105,7 @@ def harness_progress_text(cfg: HarnessConfig) -> str:
     p = _progress_path(cfg)
     if not p.exists():
         return f"(PROGRESS.md not found at {p}; create it next to PLAN.md.)"
-    return p.read_text()
+    return p.read_text(encoding="utf-8")
 
 
 def harness_commit_impl(cfg: HarnessConfig, task_id: str, message: str, repo_root: Path) -> str:
@@ -117,6 +116,10 @@ def harness_commit_impl(cfg: HarnessConfig, task_id: str, message: str, repo_roo
     """
     if not message or not message.strip():
         return "Error: commit message must be non-empty."
+
+    err = _plan_guard(cfg)
+    if err:
+        return err
 
     plan = PlanParser(cfg.plan_file)
     next_t = plan.next_task()
@@ -184,7 +187,7 @@ def harness_next_task() -> str:
 
 @mcp.tool()
 def harness_eval(task_id: str) -> str:
-    """Run the Playwright visual evaluator for the workspace; returns APPROVE/REJECT verdict and logs."""
+    """Run the Playwright visual evaluator; task_id must match the next unchecked PLAN task. Returns VERDICT line and logs."""
     load_harness_env()
     cfg = _load_config()
     return harness_eval_text(cfg, task_id=task_id.strip())

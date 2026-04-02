@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "harnesslab": {
-      "command": "python3",
+      "command": ".venv/bin/python",
       "args": ["core/mcp_server.py"]
     }
   }

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
@@ -17,31 +16,8 @@ if str(_CORE) not in sys.path:
 from env_bootstrap import load_harness_env
 from evaluator import PlaywrightVisualEvaluator, build_evaluator
 from exceptions import HarnessError
+from git_paths import git_changed_paths_relative_to_workspace
 from harness_config import HarnessConfig
-
-
-def _git_changed_files(workspace: Path) -> list[str] | None:
-    """Return paths changed vs HEAD, or None if not a git repo."""
-    if not (workspace / ".git").exists():
-        return None
-    r = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-    )
-    if r.returncode != 0:
-        return None
-    names = [line.strip() for line in r.stdout.splitlines() if line.strip()]
-    r2 = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-    )
-    if r2.returncode == 0:
-        names.extend(line.strip() for line in r2.stdout.splitlines() if line.strip())
-    return sorted({n.replace("\\", "/") for n in names})
 
 
 def main() -> None:
@@ -86,7 +62,7 @@ def main() -> None:
     else:
         evaluator = build_evaluator(cfg)
 
-    edited = _git_changed_files(cfg.workspace_dir)
+    edited = git_changed_paths_relative_to_workspace(cfg.workspace_dir)
     result = evaluator.run(edited_paths=edited)
 
     prefix = f"[{args.task_id}] " if args.task_id else ""

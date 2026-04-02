@@ -92,6 +92,24 @@ def test_harness_eval_text_uses_verdict(tmp_path: Path) -> None:
     assert "VERDICT: REJECT" in text
 
 
+def test_harness_eval_text_task_mismatch(tmp_path: Path) -> None:
+    yml = _write_minimal_harness(tmp_path)
+    cfg = HarnessConfig.from_yaml(yml)
+    out = mcp_server.harness_eval_text(cfg, "TASK_99")
+    assert "mismatch" in out.lower()
+    with patch.object(mcp_server, "run_playwright_eval") as mock_eval:
+        mcp_server.harness_eval_text(cfg, "TASK_99")
+    mock_eval.assert_not_called()
+
+
+def test_plan_guard_missing_plan_file(tmp_path: Path) -> None:
+    yml = _write_minimal_harness(tmp_path)
+    cfg = HarnessConfig.from_yaml(yml)
+    Path(cfg.plan_file).unlink()
+    assert "not found" in mcp_server.harness_next_task_text(cfg).lower()
+    assert "not found" in mcp_server.harness_commit_impl(cfg, "TASK_01", "m", tmp_path).lower()
+
+
 def test_harness_commit_blocks_on_task_mismatch(tmp_path: Path) -> None:
     yml = _write_minimal_harness(tmp_path)
     cfg = HarnessConfig.from_yaml(yml)

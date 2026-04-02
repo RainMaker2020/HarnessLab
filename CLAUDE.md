@@ -33,11 +33,11 @@ When the **Harness MCP server** (`harnesslab` in `.mcp.json`) is available, pref
 3. Optional distillation: `python manage.py --distill --task TASK_XX` (requires `paths.distillation_export` in `harness.yaml`).
 4. Run **`harness_eval`** (MCP) or `/harness-eval` or `python core/evaluator_cli.py` when visual/functional gates apply.
 
-## MCP tools (stdio server: `python3 core/mcp_server.py`)
+## MCP tools (stdio server: `.venv/bin/python core/mcp_server.py`; fallback `python3` if venv missing)
 | Tool | Role |
 |------|------|
 | `harness_next_task` | Next unchecked line from `PLAN.md` |
-| `harness_eval` | Run Playwright visual evaluator; returns `VERDICT: APPROVE` or `REJECT` |
+| `harness_eval` | Run Playwright visual evaluator; `task_id` must match the current next task; returns `VERDICT: APPROVE` or `REJECT` |
 | `harness_commit` | Eval gate, then `git add -A` + `git commit` at repo root (must match current next task id) |
 | `harness_progress` | Contents of `PROGRESS.md` (beside `PLAN.md`) |
 
