@@ -43,8 +43,12 @@ paths:
 models:
   planner: "claude-opus-4-6"
   generator: "claude-haiku-4-6"
-  evaluator: "claude-sonnet-4-6"
-  contract_verifier: "claude-3-5-sonnet-20241022"
+  evaluator: "deepseek-chat"
+  evaluator_provider: "openai-compatible"
+  evaluator_base_url: "https://api.deepseek.com"
+  contract_verifier: "deepseek-reasoner"
+  contract_verifier_provider: "openai-compatible"
+  contract_verifier_base_url: "https://api.deepseek.com"
 
 # ------------------------------------------
 # THE SANDBOX: Execution Environment
