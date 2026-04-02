@@ -74,11 +74,11 @@ def _make_playwright_mocks(
 
 class TestPlaywrightFunctionalEvaluatorIsBaseEvaluator:
     def test_is_subclass_of_base_evaluator(self, tmp_path: Path) -> None:
-        from evaluator import BaseEvaluator, PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import BaseEvaluator, PlaywrightFunctionalEvaluator
         assert issubclass(PlaywrightFunctionalEvaluator, BaseEvaluator)
 
     def test_instantiates_with_config(self, tmp_path: Path) -> None:
-        from evaluator import PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
         assert ev is not None
 
@@ -89,9 +89,9 @@ class TestPlaywrightFunctionalEvaluatorIsBaseEvaluator:
 
 class TestLlmQa:
     def test_returns_passed_true_on_approve(self, tmp_path: Path) -> None:
-        from evaluator import PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
-        with patch("evaluator.brain_client_for_role", return_value=_make_llm_client("Looks good.\n\nAPPROVE")):
+        with patch("harness.eval.evaluator.brain_client_for_role", return_value=_make_llm_client("Looks good.\n\nAPPROVE")):
             result = ev._llm_qa(
                 html="<html></html>",
                 console_errors=[],
@@ -101,9 +101,9 @@ class TestLlmQa:
         assert result.passed is True
 
     def test_returns_passed_false_on_reject(self, tmp_path: Path) -> None:
-        from evaluator import PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
-        with patch("evaluator.brain_client_for_role", return_value=_make_llm_client("Broken UI.\n\nREJECT")):
+        with patch("harness.eval.evaluator.brain_client_for_role", return_value=_make_llm_client("Broken UI.\n\nREJECT")):
             result = ev._llm_qa(
                 html="<html></html>",
                 console_errors=[],
@@ -113,7 +113,7 @@ class TestLlmQa:
         assert result.passed is False
 
     def test_console_errors_appear_in_prompt(self, tmp_path: Path) -> None:
-        from evaluator import PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
         captured_prompt: list[str] = []
 
@@ -124,7 +124,7 @@ class TestLlmQa:
         mock_client = MagicMock()
         mock_client.complete_text.side_effect = fake_complete
 
-        with patch("evaluator.brain_client_for_role", return_value=mock_client):
+        with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
             ev._llm_qa(
                 html="<html></html>",
                 console_errors=["Uncaught TypeError: cannot read 'foo'"],
@@ -136,7 +136,7 @@ class TestLlmQa:
         assert "Uncaught TypeError" in captured_prompt[0]
 
     def test_network_failures_appear_in_prompt(self, tmp_path: Path) -> None:
-        from evaluator import PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
         captured_prompt: list[str] = []
 
@@ -147,7 +147,7 @@ class TestLlmQa:
         mock_client = MagicMock()
         mock_client.complete_text.side_effect = fake_complete
 
-        with patch("evaluator.brain_client_for_role", return_value=mock_client):
+        with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
             ev._llm_qa(
                 html="<html></html>",
                 console_errors=[],
@@ -160,7 +160,7 @@ class TestLlmQa:
     def test_contract_file_content_included_when_present(self, tmp_path: Path) -> None:
         contract_file = tmp_path / "TASK_01.contract.test.ts"
         contract_file.write_text("describe('login', () => { it('works', ...); });")
-        from evaluator import PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
         captured_prompt: list[str] = []
 
@@ -171,7 +171,7 @@ class TestLlmQa:
         mock_client = MagicMock()
         mock_client.complete_text.side_effect = fake_complete
 
-        with patch("evaluator.brain_client_for_role", return_value=mock_client):
+        with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
             ev._llm_qa(
                 html="<html></html>",
                 console_errors=[],
@@ -182,9 +182,9 @@ class TestLlmQa:
         assert "describe('login'" in captured_prompt[0]
 
     def test_prompt_works_without_contract_file(self, tmp_path: Path) -> None:
-        from evaluator import PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
-        with patch("evaluator.brain_client_for_role", return_value=_make_llm_client("APPROVE")):
+        with patch("harness.eval.evaluator.brain_client_for_role", return_value=_make_llm_client("APPROVE")):
             result = ev._llm_qa(
                 html="<html></html>",
                 console_errors=[],
@@ -192,11 +192,11 @@ class TestLlmQa:
                 task=_make_task(task_id="TASK_99"),  # no contract file
             )
         # should not raise; result is EvalResult
-        from evaluator import EvalResult
+        from harness.eval.evaluator import EvalResult
         assert isinstance(result, EvalResult)
 
     def test_llm_exception_returns_failed_result(self, tmp_path: Path) -> None:
-        from evaluator import PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
 
         class FakeAPIError(Exception):
@@ -205,7 +205,7 @@ class TestLlmQa:
         mock_client = MagicMock()
         mock_client.complete_text.side_effect = FakeAPIError("rate limit")
 
-        with patch("evaluator.brain_client_for_role", return_value=mock_client):
+        with patch("harness.eval.evaluator.brain_client_for_role", return_value=mock_client):
             result = ev._llm_qa(
                 html="<html></html>",
                 console_errors=[],
@@ -217,8 +217,8 @@ class TestLlmQa:
         assert result.exit_code != 0
 
     def test_uses_correct_arg_order_for_brain_client(self, tmp_path: Path) -> None:
-        """brain_client_for_role must be called as (config.models, 'evaluator')."""
-        from evaluator import PlaywrightFunctionalEvaluator
+        """brain_client_for_role must be called as (models dict, 'evaluator')."""
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
         captured_calls: list[tuple] = []
 
@@ -226,7 +226,7 @@ class TestLlmQa:
             captured_calls.append((models, role))
             return _make_llm_client("APPROVE")
 
-        with patch("evaluator.brain_client_for_role", side_effect=fake_brain_client):
+        with patch("harness.eval.evaluator.brain_client_for_role", side_effect=fake_brain_client):
             ev._llm_qa(
                 html="<html></html>",
                 console_errors=[],
@@ -247,12 +247,12 @@ class TestLlmQa:
 class TestRunAsync:
     def test_page_load_failure_returns_failed_result(self, tmp_path: Path) -> None:
         (tmp_path / "index.html").write_text("<html></html>")
-        from evaluator import EvalResult, PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import EvalResult, PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
         mock_ap, _ = _make_playwright_mocks(goto_raises=Exception("net::ERR_CONNECTION_REFUSED"))
 
-        with patch("evaluator.async_playwright", return_value=mock_ap), \
-             patch("evaluator.brain_client_for_role", return_value=_make_llm_client("APPROVE")):
+        with patch("harness.eval.evaluator.async_playwright", return_value=mock_ap), \
+             patch("harness.eval.evaluator.brain_client_for_role", return_value=_make_llm_client("APPROVE")):
             result = ev.run(task=_make_task())
 
         assert isinstance(result, EvalResult)
@@ -261,12 +261,12 @@ class TestRunAsync:
 
     def test_happy_path_approve_returns_passed_true(self, tmp_path: Path) -> None:
         (tmp_path / "index.html").write_text("<html><body>App</body></html>")
-        from evaluator import EvalResult, PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import EvalResult, PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
         mock_ap, _ = _make_playwright_mocks()
 
-        with patch("evaluator.async_playwright", return_value=mock_ap), \
-             patch("evaluator.brain_client_for_role", return_value=_make_llm_client("All good.\n\nAPPROVE")):
+        with patch("harness.eval.evaluator.async_playwright", return_value=mock_ap), \
+             patch("harness.eval.evaluator.brain_client_for_role", return_value=_make_llm_client("All good.\n\nAPPROVE")):
             result = ev.run(task=_make_task())
 
         assert isinstance(result, EvalResult)
@@ -274,16 +274,16 @@ class TestRunAsync:
 
     def test_run_signature_accepts_edited_paths_and_task(self, tmp_path: Path) -> None:
         """run(edited_paths=None, task=None) must not raise TypeError."""
-        from evaluator import PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
         ev = PlaywrightFunctionalEvaluator(_make_config(tmp_path))
         mock_ap, _ = _make_playwright_mocks()
 
-        with patch("evaluator.async_playwright", return_value=mock_ap), \
-             patch("evaluator.brain_client_for_role", return_value=_make_llm_client("APPROVE")):
+        with patch("harness.eval.evaluator.async_playwright", return_value=mock_ap), \
+             patch("harness.eval.evaluator.brain_client_for_role", return_value=_make_llm_client("APPROVE")):
             # Both keyword params should be accepted without TypeError
             result = ev.run(edited_paths=["src/app.ts"], task=_make_task())
 
-        from evaluator import EvalResult
+        from harness.eval.evaluator import EvalResult
         assert isinstance(result, EvalResult)
 
 
@@ -293,8 +293,8 @@ class TestRunAsync:
 
 class TestBuildEvaluatorRouting:
     def test_playwright_functional_strategy_routes_to_evaluator(self, tmp_path: Path) -> None:
-        from evaluator import PlaywrightFunctionalEvaluator
-        from sub_orchestrator import build_evaluator
+        from harness.eval.evaluator import PlaywrightFunctionalEvaluator
+        from harness.eval.evaluator import build_evaluator
 
         cfg = MagicMock()
         cfg.evaluator_type = "playwright_functional"

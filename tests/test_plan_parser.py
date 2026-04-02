@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from main import PlanParser, Task
+from harness.planning.harness_plan import PlanParser, Task
 
 
 @pytest.fixture

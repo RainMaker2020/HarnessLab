@@ -50,4 +50,5 @@ COPY docs/ docs/
 #   docker run -v $(pwd)/workspace:/harness/workspace harnesslab
 VOLUME ["/harness/workspace"]
 
-CMD ["python3", "core/main.py"]
+# Phase 2: no Python orchestrator loop; keep container alive for mounted workspace / Claude Code.
+CMD ["tail", "-f", "/dev/null"]

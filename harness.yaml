@@ -24,20 +24,27 @@ paths:
   screenshot_target: "./project/workspace/.harness_screenshot.png"
 
 # ------------------------------------------
-# THE EFFICIENCY ENGINE: Asymmetric Model Routing
+# THE EFFICIENCY ENGINE: Model distribution (per role)
 # ------------------------------------------
-# Model ids per role. For Brain API roles (evaluator, contract_verifier), optional
-# {role}_provider: anthropic | openai | openai-compatible
-# {role}_base_url: required for openai-compatible; optional for openai (Azure OpenAI, proxy, etc.)
+# Set model id per role here. API keys live in .env only — see .env.example.
+#
+# Roles:
+#   planner / generator — Claude CLI (--model); no _provider keys.
+#   evaluator / contract_verifier — Brain HTTP API; optional per-role:
+#     {role}_provider: anthropic | openai | openai-compatible
+#     {role}_base_url: required for openai-compatible; optional for openai (Azure, proxy).
+#
+# Examples (uncomment and adjust):
+#   evaluator_provider: "openai"
+#   evaluator: "gpt-4o"
+#   contract_verifier_provider: "openai-compatible"
+#   contract_verifier_base_url: "https://api.deepseek.com"
+#   contract_verifier: "deepseek-reasoner"
 models:
   planner: "claude-opus-4-6"
   generator: "claude-haiku-4-6"
   evaluator: "claude-sonnet-4-6"
-  # evaluator_provider: "openai"
-  # evaluator: "gpt-4o"
   contract_verifier: "claude-3-5-sonnet-20241022"
-  # contract_verifier_provider: "openai-compatible"
-  # contract_verifier_base_url: "https://api.deepseek.com"
 
 # ------------------------------------------
 # THE SANDBOX: Execution Environment
@@ -60,13 +67,39 @@ evaluation:
   # contract_test_command: "npx vitest run {contract_rel}"
   planner_timeout_seconds: 900
   playwright_target: "index.html"
+  # Vendored design bar (Anthropic frontend-design skill — see project/docs/frontend-design-skill.md).
+  # Appended to the vision prompt by PlaywrightVisualEvaluator._vision_prompt_text().
+  vision_rubric_supplement: "./project/docs/frontend-design-skill.md"
   vision_rubric: |
-    You are a senior UI/UX reviewer. Examine the screenshot against SPEC.md.
-    1. Does the UI use only generic Tailwind defaults? (If yes, score low and REJECT.)
-    2. Is the layout responsive and accessible?
-    3. Does the typography match the specification?
-    4. Are there visible 'AI slop' artifacts or placeholder text?
-    Score 1–10. If score < 8, include REJECT. If score >= 8, end with APPROVE.
+    You are a hostile design QA lead. Default stance: REJECT. The screenshot must prove compliance with SPEC.md; generosity is a failure mode.
+
+    **Color fidelity (hex anchors — reject if the UI clearly contradicts these)**
+    - Page background must read as a deep slate gradient, not flat mid-gray: anchors ~`#0f172a` (slate-900) → ~`#1e293b` (slate-800).
+    - Decorative orbs: one must read as sky (~`#38bdf8` / sky-400) and one as purple (~`#a855f7` / purple-500), ~20% opacity, large blurred circles—not tiny dots or solid blocks.
+    - Glass panels: semi-transparent light surfaces over dark—not opaque white cards on white, nor muddy gray slabs without blur/readable depth.
+    - Primary data accent (humidity/wind/pressure values): ~`#38bdf8` (sky-400). Muted labels: ~`#94a3b8` (slate-400). Hero/city text: white ~`#ffffff`.
+    If two or more of these are materially wrong (e.g., wrong hue family, neon on white, light mode), REJECT.
+
+    **Spacing & layout (exact expectations from SPEC)**
+    - Main column: visually centered with a clear max width (~`max-w-5xl` / ~1024px content feel—not edge-to-edge on desktop).
+    - Vertical rhythm: obvious consistent gaps between major blocks (~`space-y-6` / ~24px tier), not cramped or random.
+    - Cards/tiles: generous internal padding (~`p-6` / 24px minimum); cramped 8px padding is a fail.
+    - Metric area: three distinct columns on large viewports; forecast strip shows five peers with even spacing (or horizontal scroll on narrow widths with snap—infer from crop).
+
+    **Accessibility (WCAG-aligned; reject on clear violations)**
+    - Search control: must have a visible label OR unambiguous `aria-label` affordance (infer from visible “Search”/label text or input context).
+    - Decorative icons: should not present as unlabeled meaningful images; expect `aria-hidden` or text alternative pattern—flag icon-only mystery controls.
+    - Contrast: primary text on glass/surfaces must appear comfortably readable (target ≥4.5:1 for normal text vs background); thin gray-on-gray body copy is REJECT.
+    - Interactive targets: primary actions must not look like tiny hit areas (flag obvious sub-40px controls).
+
+    **Typography & craft**
+    - Hero temperature must feel oversized and weighty (SPEC: ~112px class / `text-7xl` tier); tiny hero is REJECT.
+    - Data numerals should read as monospace; body as humanist sans—reject if everything is one generic system font with no hierarchy.
+    - Reject obvious “AI slop”: purple-pink gradient clichés, stock illustration feel, lorem/placeholder copy, watermarks, or broken layouts.
+
+    **Scoring**
+    Score 1–10 (10 = flawless against SPEC). **APPROVE only if score is 10 AND no mandatory item above fails.** Otherwise output REJECT with concrete reasons (cite hex, spacing, or a11y gap).
+    End your response with exactly one line: `VERDICT: APPROVE` or `VERDICT: REJECT`.
 
 # ------------------------------------------
 # THE CIRCUIT BREAKER: Resilience & Economics

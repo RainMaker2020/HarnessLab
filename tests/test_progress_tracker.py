@@ -9,8 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from progress_tracker import ProgressTracker, ProgressSnapshot
-from exceptions import HarnessError
+from harness.git.progress_tracker import ProgressTracker, ProgressSnapshot
+from harness.exceptions import HarnessError
 
 
 # ---------------------------------------------------------------------------

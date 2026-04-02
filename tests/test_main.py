@@ -1,4 +1,4 @@
-"""Tests for core/main.py CLI (e.g. ``--init``)."""
+"""Tests for manage.py CLI (e.g. ``--init``)."""
 
 from __future__ import annotations
 
@@ -8,13 +8,15 @@ from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "core"))
 
-from exceptions import HarnessError
+from harness.exceptions import HarnessError
 
 
 def test_main_init_invokes_scaffolder():
-    import main as main_mod
+    import manage as main_mod
 
     with patch.object(main_mod, "Scaffolder") as MockScaff, patch.object(main_mod, "ModelRouter") as MockRoute:
         with patch.object(sys, "argv", ["prog", "--init", "my idea", "-y"]):
@@ -26,7 +28,7 @@ def test_main_init_invokes_scaffolder():
 
 
 def test_main_init_harness_error_exits_with_code_1():
-    import main as main_mod
+    import manage as main_mod
 
     with patch.object(main_mod, "Scaffolder") as MockScaff, patch.object(main_mod, "ModelRouter"):
         MockScaff.return_value.run.side_effect = HarnessError("bad")

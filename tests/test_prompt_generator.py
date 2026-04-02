@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from prompt_generator import PromptGenerator
+from harness.prompts.prompt_generator import PromptGenerator
 
 
 @pytest.fixture

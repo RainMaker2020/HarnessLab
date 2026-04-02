@@ -1,20 +1,20 @@
 # How HarnessLab works (repository guide)
 
-This document describes how the **HarnessLab** codebase is structured, how execution flows from `python core/main.py`, and which components talk to the **Claude CLI** versus the **Anthropic HTTP API**.
+This document describes how the **HarnessLab** codebase is structured, how **Phase 2** runs the task loop via **Claude Code** (`CLAUDE.md`, slash commands, hooks), and which components still use the **Claude CLI** versus the **Anthropic HTTP API**.
 
 ---
 
-## 1. Entry point
+## 1. Entry points (Phase 2)
 
 | Invocation | What runs |
 |------------|-----------|
-| `python core/main.py` | Loads `harness.yaml` from the repo root, then either **linear** or **recursive** orchestration (see below). |
-| `python core/main.py --init "…"` | **Scaffolder only**: writes `project/ARCHITECTURE.md`, `project/SPEC.md`, and `project/workspace/PLAN.md` (default paths) from your idea, then exits. Does not run the task loop. |
+| **Claude Code** + `/harness-run` | Primary autonomous loop: read `PLAN.md`, implement tasks, eval hooks (see root `CLAUDE.md`). |
+| `python manage.py --init "…"` | **Scaffolder**: writes `ARCHITECTURE.md`, `SPEC.md`, and `PLAN.md` (paths from `harness.yaml`), then exits. |
+| `python manage.py --distill` | Appends prompt + git diff to `paths.distillation_export` (JSONL). |
+| `python core/evaluator_cli.py` | Runs the configured evaluator (build, Playwright, vision, etc.) from `harness.yaml`. |
+| **`MasterOrchestrator`** (`orchestration.mode: recursive`) | Provisions each EPIC module directory (git isolation, `harness.yaml`, contracts), then runs **`claude -p "Execute the PLAN.md in this module."`** with `cwd` set to that module (requires Claude Code CLI on `PATH`). |
 
-Implementation: `core/main.py`.
-
-- **`orchestration.mode: linear`** (default): builds a `SubOrchestrator` and runs the PLAN task loop.
-- **`orchestration.mode: recursive`**: imports `MasterOrchestrator` from `core/master_orchestrator.py` for EPIC-style multi-module orchestration (see that file and `project/docs/EPIC.md`).
+For day-to-day work, prefer **Claude Code** at the repo root with `/harness-run`; use **`MasterOrchestrator`** when you want Python-driven EPIC iteration from `harness.yaml`.
 
 ---
 
@@ -47,38 +47,21 @@ So: **scaffolding and implementation runs can work with CLI-only auth**, while *
 
 ---
 
-## 4. Linear run: end-to-end task flow (`SubOrchestrator`)
+## 4. Task flow (Phase 2 — agentic loop)
 
-`core/sub_orchestrator.py` owns the main loop for **`orchestration.mode: linear`**.
+The **PLAN** loop is executed by the **generator agent** in Claude Code, guided by `CLAUDE.md` and `/harness-next`. In-repo building blocks still apply:
 
-1. **`GitManager.ensure_repo()`**  
-   Ensures `workspace/` is a git repo (initialized if needed).
+1. **`PlanParser`** (`core/harness_plan.py`) — same checklist semantics for tests and tools; agents edit `PLAN.md` directly.
 
-2. **`PlanParser.next_task()`**  
-   Reads `workspace/PLAN.md`, finds the first unchecked line matching  
-   `- [ ] TASK_XX: description`.
+2. **Contracts (optional `test_first`)** — **`ContractPlanner`** / **`ContractVerifier`** in `core/planner.py` and `core/evaluator.py` unchanged for CLI-driven contract generation when you run those tools.
 
-3. **Per task** (conceptually):
+3. **`PromptGenerator`** — still assembles prompts if you invoke it from scripts.
 
-   - **If `test_first` is true — NEGOTIATE**  
-     - **`ContractPlanner`** (`core/planner.py`): runs **`claude --print …`** with the **planner** model; writes `workspace/{TASK_ID}.contract.test.ts`.  
-     - **`ContractVerifier`** (`core/evaluator.py`): calls **`anthropic` Messages API** with **`contract_verifier`** (or **`evaluator`**) model; checks the contract against `SPEC.md`.  
-     - On success, the contract file is **committed** (“locked”) before implementation.
+4. **`build_evaluator(config)`** (`core/evaluator.py`) — factory for **`ExitCodeEvaluator`**, **`PlaywrightVisualEvaluator`**, **`PlaywrightFunctionalEvaluator`**; used by **`evaluator_cli.py`** and **`MasterOrchestrator`** test wiring.
 
-   - **`PromptGenerator`** (`core/prompt_generator.py`): builds the prompt file (from `ARCHITECTURE.md`, `SPEC.md`, task context, optional Wisdom RAG snippets, prior failures from `docs/history.json`, etc.).
+5. **Hooks** — `core/hooks/post_write_gate.py` runs `evaluation.build_command` after workspace writes; `core/hooks/pre_stop_check.sh` blocks session end while `PLAN.md` has unchecked tasks.
 
-   - **`Worker.run()`**  
-     Runs **`claude --print <prompt> --model <generator model>`** with **`cwd=workspace/`** (local) or **`DockerManager.exec_claude`** (docker). This is the **implementation** step.
-
-   - **`build_evaluator(config)`** (`core/sub_orchestrator.py`): returns an evaluator chain based on `evaluation.strategy` — e.g. **`ExitCodeEvaluator`** (runs `build_command`), optionally **`PlaywrightVisualEvaluator`** + Anthropic vision, optional contract test command merged with primary result.
-
-   - **Git / history**  
-     On success: commit, **`PlanParser.mark_done`**, append **`HistoryManager`**, optional **`TrajectoryLogger`**.  
-     On failure: optional **rollback** (`auto_rollback`), retries up to **`max_retries_per_task`**.
-
-4. **Optional `ObservationDeck`** (`core/ui.py`): if **`interactive_mode`** is true, human can commit / rollback / override after evaluation.
-
-5. **Wisdom RAG** (`core/wisdom_rag.py`): when enabled, indexes or queries Chroma under `paths.wisdom_store` to enrich prompts.
+6. **Wisdom RAG** (`core/wisdom_rag.py`) — optional Chroma enrichment when integrated into your workflow.
 
 ---
 
@@ -86,13 +69,13 @@ So: **scaffolding and implementation runs can work with CLI-only auth**, while *
 
 | Module | Responsibility |
 |--------|----------------|
-| `core/main.py` | CLI (`--init`), load config, dispatch linear vs recursive. |
+| `manage.py` | CLI: `--init` (scaffolder), `--distill` (trajectory JSONL). |
 | `core/harness_config.py` | Parse `harness.yaml` → `HarnessConfig`. |
 | `core/model_router.py` | Resolve model strings per role; CLI `--model` args. |
 | `core/scaffolder.py` | `--init`: `claude --print` → parse markers → write ARCHITECTURE / SPEC / PLAN. |
 | `core/planner.py` | Generate `*.contract.test.ts` via `claude --print` (planner model). |
-| `core/sub_orchestrator.py` | PLAN loop, negotiate → prompt → worker → evaluate, git, history. |
-| `core/master_orchestrator.py` | Recursive / EPIC orchestration across sub-workspaces. |
+| `core/harness_plan.py` | `PlanParser`, `HistoryManager` for PLAN / history (no Python loop). |
+| `core/master_orchestrator.py` | EPIC provisioning; inner loop removed in Phase 2 (see README). |
 | `core/evaluator.py` | Exit-code builds, Playwright + vision (API), **ContractVerifier** (API). |
 | `core/prompt_generator.py` | Assemble per-task prompt files and workspace changelog context. |
 | `core/git_isolation.py` | Git helpers used by master flow (see imports there). |

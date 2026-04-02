@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
 
 def test_load_harness_env_calls_dotenv_with_repo_root_env_file():
-    from env_bootstrap import load_harness_env
+    from harness.env_bootstrap import load_harness_env
 
     with patch("dotenv.load_dotenv") as mock_load:
         load_harness_env()

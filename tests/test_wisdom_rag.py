@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from wisdom_rag import (
+from harness.prompts.wisdom_rag import (
     WisdomRAG,
     extract_description_from_prompt,
     extract_previous_failure_block,
