@@ -6,6 +6,20 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 
+def record_task_completion(
+    export_path: Path,
+    task_id: str,
+    prompt_text: str,
+    git_diff: str,
+    *,
+    on_record: Optional[Callable[[dict[str, Any]], None]] = None,
+) -> None:
+    """Manual or hook entry point — same as ``TrajectoryLogger.append`` without instantiating twice."""
+    TrajectoryLogger(export_path).append(
+        task_id, prompt_text, git_diff, on_record=on_record
+    )
+
+
 class TrajectoryLogger:
     """Writes one JSON object per line: input (prompt text) and output (git diff)."""
 

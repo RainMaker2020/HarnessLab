@@ -6,7 +6,7 @@ import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from llm_provider import brain_client_for_role
 
@@ -680,3 +680,21 @@ class PlaywrightFunctionalEvaluator(BaseEvaluator):
             output=out,
             exit_code=0 if passed else 1,
         )
+
+
+def build_evaluator(config: Any) -> BaseEvaluator:
+    """Factory: return the correct BaseEvaluator implementation from harness.yaml config."""
+    from exceptions import HarnessError
+
+    evaluator_map = {
+        "exit_code": ExitCodeEvaluator,
+        "playwright": PlaywrightVisualEvaluator,
+        "playwright_functional": PlaywrightFunctionalEvaluator,
+    }
+    cls = evaluator_map.get(config.evaluator_type)
+    if cls is None:
+        raise HarnessError(
+            f"Unknown evaluator type: '{config.evaluator_type}'. "
+            f"Valid options: {list(evaluator_map.keys())}"
+        )
+    return cls(config)

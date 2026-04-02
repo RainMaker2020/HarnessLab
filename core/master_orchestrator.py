@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -14,21 +13,19 @@ from typing import Any, Optional
 import yaml
 
 from exceptions import HarnessError
+from evaluator import build_evaluator
 from git_isolation import provision_subrepo_workspace, provision_worktree_workspace
 from harness_config import HarnessConfig
-from sub_orchestrator import build_evaluator
 from ui import ObservationDeck
 
 
 def orchestrator_class_from_main() -> type:
-    """Load the same `Orchestrator` class exported by core/main.py (alias of SubOrchestrator)."""
-    main_path = Path(__file__).resolve().parent / "main.py"
-    spec = importlib.util.spec_from_file_location("harness_main_entry", main_path)
-    if spec is None or spec.loader is None:
-        raise HarnessError(f"Cannot load orchestrator entry module: {main_path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return getattr(mod, "Orchestrator")
+    """Phase 2: the Python SubOrchestrator loop was removed; tests patch this to inject a stub."""
+    raise HarnessError(
+        "The Python SubOrchestrator loop was removed in Phase 2 (agentic-native). "
+        "Use Claude Code with /harness-run in each module workspace. "
+        "Tests may patch `master_orchestrator.orchestrator_class_from_main`."
+    )
 
 
 @dataclass

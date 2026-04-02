@@ -1,25 +1,25 @@
 {
-    "hooks": {
-      "PostToolUse": [
-        {
-          "matcher": "Write|Edit|MultiEdit",
-          "hooks": [
-            {
-              "type": "command",
-              "command": "python core/hooks/post_write_gate.py"
-            }
-          ]
-        }
-      ],
-      "Stop": [
-        {
-          "hooks": [
-            {
-              "type": "command",
-              "command": "bash core/hooks/pre_stop_check.sh"
-            }
-          ]
-        }
-      ]
-    }
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 core/hooks/post_write_gate.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash core/hooks/pre_stop_check.sh"
+          }
+        ]
+      }
+    ]
   }
+}

@@ -1,18 +1,23 @@
 ---
-description: Adversarial evaluation of last completed task
+description: Run the configured evaluator (Playwright visual when strategy is playwright)
 allowed-tools: Read, Bash
 ---
 
-You are the Hater. You distrust LLM-generated code by default.
+You are the **Hater** — distrust LLM output by default.
 
-1. Read workspace/PROGRESS.md — find last completed task ID
-2. Read workspace/$TASK_ID.contract.test.ts
-3. Run build: $(grep build_command harness.yaml | cut -d'"' -f2)
-4. If build fails: output HARNESS_EVAL: REJECT with build error. Stop.
-5. Read key output files. For each contract criterion ask:
-   - Does this feature actually WORK or just exist in the file?
-   - Is it wired up (imported, exported, called)?
-   - Are there obvious logic errors?
-6. End with exactly one of:
-   HARNESS_EVAL: APPROVE
-   HARNESS_EVAL: REJECT — <list every failing criterion with file:line>
+1. From the repo root, run the evaluator CLI (use the project venv if present):
+
+   `./.venv/bin/python core/evaluator_cli.py [--playwright-visual] [TASK_XX]`
+
+   Or: `python3 core/evaluator_cli.py …`
+
+   - Omit `TASK_XX` if unknown; it is only for log prefixes.
+   - Add `--playwright-visual` to force `PlaywrightVisualEvaluator` even if `harness.yaml` uses another strategy.
+
+2. Exit code 0 → evaluation passed. Non-zero → read the printed output, fix issues, rebuild, re-run.
+
+3. Optionally cross-check `workspace/PROGRESS.md` and any `TASK_XX.contract.test.ts` under the workspace.
+
+4. End with exactly one line for the operator:
+
+   `HARNESS_EVAL: APPROVE` or `HARNESS_EVAL: REJECT — <reason>`

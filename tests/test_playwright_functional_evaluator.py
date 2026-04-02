@@ -294,7 +294,7 @@ class TestRunAsync:
 class TestBuildEvaluatorRouting:
     def test_playwright_functional_strategy_routes_to_evaluator(self, tmp_path: Path) -> None:
         from evaluator import PlaywrightFunctionalEvaluator
-        from sub_orchestrator import build_evaluator
+        from evaluator import build_evaluator
 
         cfg = MagicMock()
         cfg.evaluator_type = "playwright_functional"
