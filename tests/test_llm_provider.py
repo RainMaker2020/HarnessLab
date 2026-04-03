@@ -161,6 +161,7 @@ def test_token_budget_retries_with_max_completion_tokens_after_bad_request():
 
 
 def test_token_budget_does_not_retry_on_401():
+    pytest.importorskip("openai", reason="openai package not installed")
     mock_client = MagicMock()
     resp_401 = MagicMock()
     resp_401.status_code = 401

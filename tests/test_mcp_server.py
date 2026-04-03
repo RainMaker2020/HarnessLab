@@ -272,7 +272,7 @@ def test_harness_commit_impl_not_a_git_repo_after_eval_passes(tmp_path: Path) ->
     fake = EvalResult(passed=True, output="ok", exit_code=0)
     nogit = tmp_path / "not_a_repo"
     nogit.mkdir()
-    with patch("harness.mcp_server.run_playwright_eval", return_value=fake):
+    with patch("harness.mcp_server.run_evaluator", return_value=fake):
         out = mcp_server.harness_commit_impl(cfg, "TASK_01", "msg", nogit)
     assert "not a git repository" in out.lower()
 
@@ -307,7 +307,7 @@ def test_harness_commit_impl_git_add_failure(tmp_path: Path) -> None:
             return subprocess.CompletedProcess(cmd, 1, "", "add failed")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    with patch("harness.mcp_server.run_playwright_eval", return_value=fake):
+    with patch("harness.mcp_server.run_evaluator", return_value=fake):
         with patch("harness.mcp_server.subprocess.run", side_effect=fake_run):
             out = mcp_server.harness_commit_impl(cfg, "TASK_01", "msg", tmp_path)
     assert "git add failed" in out.lower()
@@ -346,7 +346,7 @@ def test_harness_commit_impl_git_commit_failure(tmp_path: Path) -> None:
             return subprocess.CompletedProcess(cmd, 0, "abc\n", "")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    with patch("harness.mcp_server.run_playwright_eval", return_value=fake_eval):
+    with patch("harness.mcp_server.run_evaluator", return_value=fake_eval):
         with patch("harness.mcp_server.subprocess.run", side_effect=fake_run):
             out = mcp_server.harness_commit_impl(cfg, "TASK_01", "msg", tmp_path)
     assert "git commit failed" in out.lower()

@@ -37,7 +37,7 @@ def test_blocks_when_tasks_pending(tmp_path):
     _make_harness(tmp_path, "project/workspace/PLAN.md", ["- [ ] TASK_01: foo"])
     r = _run(tmp_path)
     assert r.returncode == 1
-    assert "HARNESS BLOCK" in r.stdout
+    assert "HARNESS BLOCK" in r.stderr
 
 
 def test_passes_when_all_tasks_done(tmp_path):
@@ -56,7 +56,7 @@ def test_grep_fallback_finds_correct_path_when_python_yaml_unavailable(tmp_path)
     r = _run(tmp_path, env_extra={"PATH": "/nonexistent:/usr/bin:/bin"})
     # Should still exit 1 (found plan via grep), NOT exit 0 silently
     assert r.returncode == 1
-    assert "HARNESS BLOCK" in r.stdout
+    assert "HARNESS BLOCK" in r.stderr
 
 
 def test_fails_loudly_when_harness_yaml_missing_and_python_fails(tmp_path):
